@@ -74,3 +74,6 @@ void md_run_setup(void);
 static inline void md_run_setup(void) {}
 
 #endif
+
+/* Used by tresor_init.c */
+dev_t name_to_dev_t(char *name);
