@@ -238,7 +238,7 @@ void tresor_thaw_processes(void)
 
 	/* prompt user for password */
 	tresor_dont_switch_console(true);
-	if (tresor_readkey("/dev/tty0", 1) < 0)
+	if (tresor_readkey(1) < 0)
 		panic("Could not prompt for TRESOR key.\n");
 	tresor_dont_switch_console(false);
 

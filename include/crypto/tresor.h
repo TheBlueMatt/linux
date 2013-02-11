@@ -20,7 +20,7 @@ bool tresor_capable(void);
 
 #ifdef CONFIG_CRYPTO_TRESOR_PROMPT
 /* Password prompt */
-int  tresor_readkey(const char *device, int resume);
+int  tresor_readkey(int resume);
 
 /* Key prompt on wakeup after suspend2ram */
 void tresor_dont_switch_console(int dont_switch);

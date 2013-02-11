@@ -944,7 +944,7 @@ static noinline void __init kernel_init_freeable(void)
 
 #ifdef CONFIG_CRYPTO_TRESOR_PROMPT
 	/* Prompt user for key */
-	if (tresor_readkey("/dev/console", 0) < 0)
+	if (tresor_readkey(0) < 0)
 		panic("Could not prompt for TRESOR key.\n");
 #endif
 #endif

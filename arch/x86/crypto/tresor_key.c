@@ -35,8 +35,10 @@
 #include <linux/sysfs.h>
 #include <linux/tty.h>
 #include <linux/fs.h>
+#include <linux/delay.h>
 #include <stdarg.h>
 
+int fds[11]; // /dev/console + /dev/tty[0-9]
 int term_fd;
 unsigned char key_hash[32];
 
@@ -110,17 +112,31 @@ error:
 }
 
 #ifdef CONFIG_CRYPTO_TRESOR_PROMPT
-/* Print to term_fd */
+/* Print to appropriate fd.
+ * This means either everything or term_fd
+ */
 static int printf_(const char *fmt, ...)
 {
-	va_list args; int col = 80; char line[col];
+	va_list args; int ret = -1, col = 80; char line[col]; int* term = fds;
 
 	va_start(args, fmt);
 	vsnprintf(line, col, fmt, args);
 	line[col-1] = 0;
 	va_end(args);
 
-	return sys_write(term_fd, line, strlen(line));
+	if (term_fd >= 0) {
+		ret = sys_write(term_fd, line, strlen(line));
+	} else {
+		while (term < fds + 11) {
+			if (*term >= 0) {
+				ret = sys_write(*term, line, strlen(line));
+				if (unlikely(!ret))
+					return ret;
+			}
+			term++;
+		}
+	}
+	return ret;
 }
 
 /* Erase line before printing (workaround for weird consoles) */
@@ -134,6 +150,33 @@ static int printf(const char *fmt, ...)
 	va_end(args);
 
 	return res;
+}
+
+/* sets term_fd to the fd which the user is actually using */
+static void setterm_fd(void)
+{
+	unsigned char c; int* term = fds;
+
+	/* First clear all input buffers, as sometimes we get ghost input... */
+	while (term < fds + 11) {
+		while (*term >= 0 && sys_read(*term, &c, 1) == 1) ;
+		term++;
+	}
+
+	/* Now wait for actual input */
+	term_fd = 0;
+	/* We use a really horrible, ugly loop here because select() doesn't work in kernel */
+	while (term_fd == 0) {
+		term = fds;
+		while (term < fds + 11) {
+			if (*term >= 0 && sys_read(*term, &c, 1) == 1) {
+				term_fd = *term;
+				break;
+			}
+			term++;
+		}
+		msleep(50);
+	}
 }
 
 /* Read from term_fd */
@@ -178,12 +221,13 @@ static void cursor_reset(void)
  * Returns an error code smaller zero if the terminal
  * cannot be opened and zero otherwise.
  */
-int tresor_readkey(const char *terminal, int resume)
+int tresor_readkey(int resume)
 {
 	unsigned char password[54], key[32], key_hash_[32], answer[4], c, ret = 0;
 	struct termios termios;
 	mm_segment_t ofs;
 	int i, j, progress;
+	int* term;
 
 #ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
 	struct page* keydevice_page = NULL;
@@ -195,18 +239,54 @@ int tresor_readkey(const char *terminal, int resume)
 	/* prepare to call systemcalls from kernelspace */
 	ofs = get_fs();
 	set_fs(get_ds());
+
 	/* try to open terminal */
-	term_fd = sys_open(terminal, O_RDWR, 0);
-	if (term_fd < 0) {
-		set_fs(ofs);
-		return term_fd;
+	term_fd = 0;
+	fds[0] = sys_open("/dev/console", O_RDWR|O_NONBLOCK, 0);
+	fds[1] = sys_open("/dev/tty0", O_RDWR|O_NONBLOCK, 0);
+	fds[2] = sys_open("/dev/tty1", O_RDWR|O_NONBLOCK, 0);
+	fds[3] = sys_open("/dev/tty2", O_RDWR|O_NONBLOCK, 0);
+	fds[4] = sys_open("/dev/tty3", O_RDWR|O_NONBLOCK, 0);
+	fds[5] = sys_open("/dev/tty4", O_RDWR|O_NONBLOCK, 0);
+	fds[6] = sys_open("/dev/tty5", O_RDWR|O_NONBLOCK, 0);
+	fds[7] = sys_open("/dev/tty6", O_RDWR|O_NONBLOCK, 0);
+	fds[8] = sys_open("/dev/tty7", O_RDWR|O_NONBLOCK, 0);
+	fds[9] = sys_open("/dev/tty8", O_RDWR|O_NONBLOCK, 0);
+	fds[10] = sys_open("/dev/tty9", O_RDWR|O_NONBLOCK, 0);
+	ret = fds[0];
+	term = fds;
+	while (term < fds + 11) {
+		if (*term >= 0) {
+			ret = *term;
+			break;
+		}
+		term++;
 	}
+	if (ret < 0) {
+		set_fs(ofs);
+		return ret;
+	}
+	ret = 0;
+
+	/* Clear the screen and ask for input on all consoles */
+	printf("\n >> TRESOR <<");
+	// The trailing \n on the next line is to make sure other terminals aren't left in a weird state
+	printf("\n Press enter to initialize input\n");
+
+	/* Find the console the user is on and clear O_NONBLOCK */
+	setterm_fd();
+	sys_fcntl(term_fd, F_SETFL, 0);
+
 	/* read single characters; no echo */
 	sys_ioctl(term_fd, TCGETS, (long)&termios);
 	termios.c_lflag &= ~(ICANON | ECHO);
 	sys_ioctl(term_fd, TCSETSF, (long)&termios);
+
 	/* initialize console */
 	cursor_enable();
+	/* re-clear screen because this sometimes makes everything visible
+	 * (the user can hit enter blind, but its cool if they can see this next part)
+	 */
 	cls();
 
 readkey:
@@ -438,7 +518,12 @@ readkey:
 
 closeret:
 	/* clean up */
-	sys_close(term_fd);
+	term = fds;
+	while (term < fds + 11) {
+		if (*term >= 0)
+			sys_close(*term);
+		term++;
+	}
 	if (keydevice_dev)
 		blkdev_put(keydevice_dev, FMODE_READ);
 	set_fs(ofs);
