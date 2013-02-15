@@ -12,7 +12,7 @@
 #define TRESOR_KDF_ITER 2000
 
 /* number of chars to clear memory */
-#define TRESOR_RANDOM_CHARS 4096
+#define TRESOR_RANDOM_CHARS 8
 
 /* TRESOR core functionality (enc, dec, setkey) */
 void tresor_encrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src);
