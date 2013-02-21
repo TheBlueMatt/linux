@@ -274,6 +274,9 @@ int crypto_sha256_update(struct shash_desc *desc, const u8 *data,
 		partial = 0;
 	}
 	memcpy(sctx->buf + partial, src, len - done);
+	/* Zeroize (barely-)sensitive information. */
+	done = 0;
+	src = NULL;
 
 	return 0;
 }
@@ -305,6 +308,7 @@ static int sha256_final(struct shash_desc *desc, u8 *out)
 
 	/* Zeroize sensitive information. */
 	memset(sctx, 0, sizeof(*sctx));
+	bits = 0; index = 0; pad_len = 0;
 
 	return 0;
 }
