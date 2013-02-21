@@ -13,6 +13,8 @@
 /* TRESOR core functionality (enc, dec, setkey) */
 void tresor_encrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src);
 void tresor_decrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src);
+// Used to notify that we have gone to sleep (ie key disappeared)
+void tresor_notify_keyunset(void);
 void tresor_setkey(const u8 *in_key);
 bool tresor_capable(void);
 
