@@ -317,20 +317,21 @@ readkey:
 
 			/* Backspace */
 			if (i > 0 && (c == 0x7f || c == 0x08)) {
-				printf_("\b \b");
+				//printf_("\b \b");
 				i--;
 			}
 
 			/* Digit */
 			else if (i < 15 && (c >= '0' && c <= '9')) {
-				printf_("%c", c);
+				//printf_("%c", c);
 				password[i++] = c;
 			}
 
 			/* Cancel */
 			else if (c == 0x03 || c == 0x18) {
-				for (; i > 0; i--)
-					printf_("\b \b");
+				//for (; i > 0; i--)
+				//	printf_("\b \b");
+				i = 0;
 			}
 
 			/* Enter */
@@ -361,20 +362,21 @@ readkey:
 
 		/* Backspace */
 		if (i > 0 && (c == 0x7f || c == 0x08)) {
-			printf_("\b \b");
+			//printf_("\b \b");
 			i--;
 		}
 
 		/* Printable character */
 		else if (i < 53 && (c >= 0x20 && c <= 0x7E)) {
-			printf_("*");
+			//printf_("*");
 			password[i++] = c;
 		}
 
 		/* Cancel */
 		else if (c == 0x03 || c == 0x18) {
-			for (; i > 0; i--)
-				printf_("\b \b");
+			//for (; i > 0; i--)
+			//	printf_("\b \b");
+			i = 0;
 		}
 
 		/* Enter */
