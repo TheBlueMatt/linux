@@ -793,7 +793,7 @@ config CRYPTO_AES_ARM_BS
 
 config CRYPTO_TRESOR
 	bool "AES cipher, cold boot resistant (TRESOR)"
-	depends on X86 && 64BIT
+	depends on X86 && 64BIT && CRYPTO_SHA256 = y
 	select CRYPTO_ALGAPI
 	select CRYPTO_MANAGER
 	select CRYPTO_MANAGER2
@@ -831,9 +831,22 @@ config CRYPTO_TRESOR_PROMPT
 
 	  Either CRYPTO_TRESOR_PROMPT or CRYPTO_TRESOR_SYSFS must be selected.
 
+if CRYPTO_TRESOR_PROMPT
+
+config CRYPTO_TRESOR_KEYDEVICE
+	bool "TRESOR Keydevice"
+	depends on CRYPTO_TRESOR_PROMPT
+	default y if CRYPTO_TRESOR_PROMPT
+	help
+	  Allow setting a kernel parameter (tresorkeydevice=) which selects a
+	  keydevice.  At TRESOR prompt, a sector number will be requested,
+	  the contents of which will be used as a salt for the passphrase.
+
+endif # if CRYPTO_TRESOR_PROMPT
+
 config CRYPTO_TRESOR_SYSFS
 	bool "TRESOR Sysfs interface"
-	depends on CRYPTO_TRESOR
+	depends on CRYPTO_TRESOR && (CRYPTO_TRESOR_KEYDEVICE=n)
 	default n
 	help
 	  Make the key for cold boot resistant encryption accessible via

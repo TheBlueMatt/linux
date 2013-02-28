@@ -27,6 +27,14 @@ void tresor_dont_switch_console(int dont_switch);
 void tresor_thaw_processes(void);
 #endif
 
+#ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
+/* Get key device */
+struct block_device* tresor_dev_wait(void);
+
+/* Read the first 512 bytes from the given 512-byte sector on bdev into the given page */
+int tresor_read_keydevice_sector(struct block_device *bdev, sector_t sector, struct page *page);
+#endif
+
 #ifndef CONFIG_CRYPTO_MANAGER_DISABLE_TESTS
 /* Prevent the test manager from overwriting dbg regs with test keys */
 void tresor_unlock_tests(void);

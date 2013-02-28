@@ -34,6 +34,7 @@
 #include <linux/syscalls.h>
 #include <linux/sysfs.h>
 #include <linux/tty.h>
+#include <linux/fs.h>
 #include <stdarg.h>
 
 int term_fd;
@@ -42,9 +43,10 @@ unsigned char key_hash[32];
 /*
  * Key derivation function: SHA-256.
  *
- * About key strenthening: Unfortunately, there is no easy way to store a salt
- * value on disk early during boot. We can only increase the number of SHA-256
- * iterations to strengthen the key.
+ * About key strenthening: It is recommended you use a random key device as well
+ * as just a passphrase to provide more input to the hash.  Currently, it only
+ * reads 512 bytes off the key device, but if you're reading this, you should go
+ * change that to make you happy.
  *
  * So use safe passwords / passphrases for TRESOR.
  */
@@ -178,10 +180,17 @@ static void cursor_reset(void)
  */
 int tresor_readkey(const char *terminal, int resume)
 {
-	unsigned char password[54], key[32], key_hash_[32], answer[4], c;
+	unsigned char password[54], key[32], key_hash_[32], answer[4], c, ret = 0;
 	struct termios termios;
 	mm_segment_t ofs;
 	int i, j, progress;
+
+#ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
+	struct page* keydevice_page = NULL;
+	unsigned char* keydevice_key = NULL;
+	sector_t keydevice_sector;
+	struct block_device* keydevice_dev;
+#endif
 
 	/* prepare to call systemcalls from kernelspace */
 	ofs = get_fs();
@@ -203,8 +212,70 @@ int tresor_readkey(const char *terminal, int resume)
 readkey:
 	/* Read password */
 	printf("\n >> TRESOR <<");
+
+#ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
+	printf("\n Waiting on keydevice(s) to appear.");
+	printf("\n If boot hangs here, make sure your modules are built-in.");
+	keydevice_dev = tresor_dev_wait();
+	if (keydevice_dev) {
+		keydevice_page = alloc_page(GFP_KERNEL);
+		if (unlikely(!keydevice_page)) {
+			ret = -ENOMEM;
+			goto closeret;
+		}
+		keydevice_key = (unsigned char*)page_address(keydevice_page);
+		if (unlikely(!keydevice_key)) {
+			ret = -ENOMEM;
+			goto closeret;
+		}
+
+		printf("\n\n Enter keydevice read offset (in sectors)  \t> ");
+
+		i = 0;
+		while (1) {
+			c = getchar();
+
+			/* Backspace */
+			if (i > 0 && (c == 0x7f || c == 0x08)) {
+				printf_("\b \b");
+				i--;
+			}
+
+			/* Digit */
+			else if (i < 15 && (c >= '0' && c <= '9')) {
+				printf_("%c", c);
+				password[i++] = c;
+			}
+
+			/* Cancel */
+			else if (c == 0x03 || c == 0x18) {
+				for (; i > 0; i--)
+					printf_("\b \b");
+			}
+
+			/* Enter */
+			else if (c == 0x04 || c == 0x0a || c == 0x0b ||
+				 c == 0x0c || c == 0x0d) {
+				if (i < 1)
+					continue;
+				for (; i < 16; i++)
+					password[i] = 0x0;
+				keydevice_sector = simple_strtoull(password, NULL, 10);
+				if (tresor_read_keydevice_sector(keydevice_dev, keydevice_sector, keydevice_page)) {
+					i = 0;
+					printf("\n Failed to read at given offset, try again  > ");
+					continue;
+				}
+				break;
+			}
+		}
+	} else {
+		printf("\n\n Not using a keydevice.");
+	}
+#endif
+
 	i = 0;
-	printf("\n\n Enter password  \t> ");
+	printf("\n\n Enter password (minimum 8 characters)  \t> ");
 	while (1) {
 		c = getchar();
 
@@ -236,8 +307,15 @@ readkey:
 			break;
 		}
 	}
+
 	/* derivate and set key */
 	prepare_sha256();
+#ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
+	if (keydevice_dev) {
+		memcpy(keydevice_key+512, password, strlen(password));
+		sha256(keydevice_key, 512+strlen(password), key);
+	} else
+#endif
 	sha256(password, strlen(password), key);
 	for (i = 0; i < TRESOR_KDF_ITER; i++) {
 		sha256(key, 32, key_hash_);
@@ -246,11 +324,24 @@ readkey:
 	tresor_setkey(key);
 	sha256(key, 32, key_hash_);
 	free_sha256();
+
 	/* Reset critical memory chunks */
 	c = 0;
-	memset(password, 0, 54);
+	memset(password, 0, sizeof(password));
 	memset(key, 0, 32);
+#ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
+	if (keydevice_dev) {
+		keydevice_sector = 0;
+		memset(keydevice_key, 0, PAGE_SIZE);
+	}
+#endif
 	wbinvd();
+
+#ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
+	if (keydevice_dev)
+		__free_page(keydevice_page);
+#endif
+
 	if (resume) {
 		/* Check if key is the same as before suspending */
 		if (memcmp(key_hash, key_hash_, 32)) {
@@ -345,10 +436,13 @@ readkey:
 	else
 		cursor_reset();
 
+closeret:
 	/* clean up */
 	sys_close(term_fd);
+	if (keydevice_dev)
+		blkdev_put(keydevice_dev, FMODE_READ);
 	set_fs(ofs);
-	return 0;
+	return ret;
 }
 #endif
 
