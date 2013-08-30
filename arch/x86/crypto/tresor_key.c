@@ -413,7 +413,7 @@ readkey:
 	/* Reset critical memory chunks */
 	c = 0;
 	memset(password, 0, sizeof(password));
-	memset(key, 0, 32);
+	memset(key, 0, sizeof(key));
 #ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
 	if (keydevice_dev) {
 		keydevice_sector = 0;
