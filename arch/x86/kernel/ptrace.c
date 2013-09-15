@@ -706,6 +706,10 @@ static unsigned long ptrace_get_debugreg(struct task_struct *tsk, int n)
 	struct thread_struct *thread = &tsk->thread;
 	unsigned long val = 0;
 
+#ifdef CONFIG_CRYPTO_TRESOR
+	return val;
+#endif
+
 	if (n < HBP_NUM) {
 		struct perf_event *bp = thread->ptrace_bps[n];
 
@@ -725,6 +729,10 @@ static int ptrace_set_breakpoint_addr(struct task_struct *tsk, int nr,
 	struct thread_struct *t = &tsk->thread;
 	struct perf_event *bp = t->ptrace_bps[nr];
 	int err = 0;
+
+#ifdef CONFIG_CRYPTO_TRESOR
+	return -EBUSY;
+#endif
 
 	if (!bp) {
 		/*
@@ -764,6 +772,13 @@ static int ptrace_set_debugreg(struct task_struct *tsk, int n,
 	struct thread_struct *thread = &tsk->thread;
 	/* There are no DR4 or DR5 registers */
 	int rc = -EIO;
+
+#ifdef CONFIG_CRYPTO_TRESOR
+	if (n < TRESOR_ACTUAL_HBP_NUM)
+		return -EBUSY;
+	else if (n == 6 || n == 7)
+		return -EPERM;
+#endif
 
 	if (n < HBP_NUM) {
 		rc = ptrace_set_breakpoint_addr(tsk, n, val);

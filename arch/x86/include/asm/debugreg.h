@@ -21,6 +21,10 @@ static inline unsigned long native_get_debugreg(int regno)
 {
 	unsigned long val = 0;	/* Damn you, gcc! */
 
+#ifdef CONFIG_CRYPTO_TRESOR
+	return val; /* don't read from dbg regs */
+#endif
+
 	switch (regno) {
 	case 0:
 		asm("mov %%db0, %0" :"=r" (val));
@@ -48,6 +52,10 @@ static inline unsigned long native_get_debugreg(int regno)
 
 static inline void native_set_debugreg(int regno, unsigned long value)
 {
+#ifdef CONFIG_CRYPTO_TRESOR
+	return; /* don't set dbg regs */
+#endif
+
 	switch (regno) {
 	case 0:
 		asm("mov %0, %%db0"	::"r" (value));

@@ -791,6 +791,58 @@ config CRYPTO_AES_ARM_BS
 	  This implementation does not rely on any lookup tables so it is
 	  believed to be invulnerable to cache timing attacks.
 
+config CRYPTO_TRESOR
+	bool "AES cipher, cold boot resistant (TRESOR)"
+	depends on X86 && 64BIT
+	select CRYPTO_ALGAPI
+	select CRYPTO_MANAGER
+	select CRYPTO_MANAGER2
+	default n
+	help
+	  TRESOR Runs Encryption Securely Outside RAM
+
+	  Secure AES implementation which is resistant against cold boot
+	  attacks as described in http://citp.princeton.edu/memory/.
+
+	  The idea behind this implementation is to store the secret key
+	  inside CPU registers rather than in RAM. All computations take
+	  place only on registers, i.e., no AES state is ever going to RAM.
+
+	  In particular, the debugging registers of the x86 architecture
+	  are misused as secure key storage. For debugging, the kernel uses
+	  software breakpoints only, no hardware breakpoints.
+
+	  The supported key sizes are: 128, 192 and 256 bits.
+
+	  This implementation requires Intel's AES-NI instruction set,
+	  currently available to all Core i5/i7 and many i3.
+
+	  If you have another CPU, say N. If unsure, say N.
+
+if CRYPTO_TRESOR
+
+config CRYPTO_TRESOR_PROMPT
+	bool "TRESOR Startup Prompt"
+	depends on CRYPTO_TRESOR
+	default y if CRYPTO_TRESOR
+	help
+	  Display a prompt at startup and after suspend to read the key
+	  which should be used for cold boot resistant encryption.
+
+	  Either CRYPTO_TRESOR_PROMPT or CRYPTO_TRESOR_SYSFS must be selected.
+
+config CRYPTO_TRESOR_SYSFS
+	bool "TRESOR Sysfs interface"
+	depends on CRYPTO_TRESOR
+	default n
+	help
+	  Make the key for cold boot resistant encryption accessible via
+	  sysfs. With this option the AES key be set directly as well.
+
+	  Either CRYPTO_TRESOR_PROMPT or CRYPTO_TRESOR_SYSFS must be selected.
+
+endif	# if CRYPTO_TRESOR
+
 config CRYPTO_ANUBIS
 	tristate "Anubis cipher algorithm"
 	select CRYPTO_ALGAPI

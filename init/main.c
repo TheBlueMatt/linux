@@ -88,6 +88,11 @@
 #include <asm/smp.h>
 #endif
 
+#ifdef CONFIG_CRYPTO_TRESOR
+#include <crypto/tresor.h>
+#include <linux/crypto.h>
+#endif
+
 static int kernel_init(void *);
 
 extern void init_IRQ(void);
@@ -927,6 +932,22 @@ static noinline void __init kernel_init_freeable(void)
 		ramdisk_execute_command = NULL;
 		prepare_namespace();
 	}
+
+#ifdef CONFIG_CRYPTO_TRESOR
+#ifndef CONFIG_CRYPTO_MANAGER_DISABLE_TESTS
+	/* Run TRESOR tests */
+	tresor_unlock_tests();
+	alg_test("ecb(tresor)", "ecb(tresor)", 0, 0);
+	alg_test("cbc(tresor)", "cbc(tresor)", 0, 0);
+	tresor_lock_tests();
+#endif
+
+#ifdef CONFIG_CRYPTO_TRESOR_PROMPT
+	/* Prompt user for key */
+	if (tresor_readkey("/dev/console", 0) < 0)
+		panic("Could not prompt for TRESOR key.\n");
+#endif
+#endif
 
 	/*
 	 * Ok, we have completed the initial bootup, and

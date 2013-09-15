@@ -38,7 +38,11 @@ struct mm_struct;
  */
 #define NET_IP_ALIGN	0
 
+#ifdef CONFIG_CRYPTO_TRESOR
+#define HBP_NUM 0 /* forge number of hardware breakpoint registers */
+#else
 #define HBP_NUM 4
+#endif
 /*
  * Default implementation of macro that returns current
  * instruction pointer ("program counter").

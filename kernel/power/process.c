@@ -17,6 +17,9 @@
 #include <linux/delay.h>
 #include <linux/workqueue.h>
 #include <linux/kmod.h>
+#ifdef CONFIG_CRYPTO_TRESOR_PROMPT
+#include <crypto/tresor.h>
+#endif
 
 /* 
  * Timeout for stopping processes
@@ -222,3 +225,39 @@ void thaw_kernel_threads(void)
 	schedule();
 	printk("done.\n");
 }
+
+#ifdef CONFIG_CRYPTO_TRESOR_PROMPT
+/* Wake up kernel tasks */
+static void thaw_kernel_tasks(void)
+{
+	struct task_struct *g, *p;
+
+	if (pm_freezing)
+		atomic_dec(&system_freezing_cnt);
+	pm_freezing = false;
+	pm_nosig_freezing = false;
+
+	read_lock(&tasklist_lock);
+	do_each_thread(g, p) {
+		if (p->flags & PF_KTHREAD)
+			__thaw_task(p);
+	} while_each_thread(g, p);
+	read_unlock(&tasklist_lock);
+}
+
+/* Prompt the user to enter a password before waking up userland tasks */
+void tresor_thaw_processes(void)
+{
+	/* wake kernel tasks */
+	thaw_kernel_tasks();
+
+	/* prompt user for password */
+	tresor_dont_switch_console(true);
+	if (tresor_readkey("/dev/tty0", 1) < 0)
+		panic("Could not prompt for TRESOR key.\n");
+	tresor_dont_switch_console(false);
+
+	/* wake userland tasks */
+	thaw_processes();
+}
+#endif

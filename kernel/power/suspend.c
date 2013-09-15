@@ -27,6 +27,10 @@
 #include <linux/ftrace.h>
 #include <trace/events/power.h>
 
+#ifdef CONFIG_CRYPTO_TRESOR_PROMPT
+#include <crypto/tresor.h>
+#endif
+
 #include "power.h"
 
 const char *const pm_states[PM_SUSPEND_MAX] = {
@@ -307,7 +311,12 @@ int suspend_devices_and_enter(suspend_state_t state)
  */
 static void suspend_finish(void)
 {
+#ifdef CONFIG_CRYPTO_TRESOR_PROMPT
+	/* read key before thawing processes */
+	tresor_thaw_processes();
+#else
 	suspend_thaw_processes();
+#endif
 	pm_notifier_call_chain(PM_POST_SUSPEND);
 	pm_restore_console();
 }
