@@ -36,6 +36,7 @@
 #include <linux/tty.h>
 #include <linux/fs.h>
 #include <linux/delay.h>
+#include <linux/dma_remapping.h>
 #include <stdarg.h>
 
 int fds[11]; // /dev/console + /dev/tty[0-9]
@@ -292,6 +293,8 @@ int tresor_readkey(int resume)
 readkey:
 	/* Read password */
 	printf("\n >> TRESOR <<");
+	if (!intel_iommu_enabled)
+		printf("\n WARNING: IOMMU disabled, you are vulnerable to DMA attacks!");
 
 #ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
 	printf("\n Waiting on keydevice(s) to appear.");
