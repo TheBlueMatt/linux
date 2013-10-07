@@ -4,9 +4,9 @@
 
 #include <crypto/tresor.h>
 
-#if PAGE_SIZE < 512
-#error "TRESOR with keydevices doesn't support PAGE_SIZEs smaller than 512 bytes"
-// Wait....such a thing exists??!
+#if PAGE_SIZE < 512 + TRESOR_MAX_PASSWORD_LENGTH
+#error "TRESOR with keydevices doesn't support PAGE_SIZEs smaller than 512 + password length bytes"
+// We already require AES-NI...why not this too?
 #endif
 
 struct bio_batch {

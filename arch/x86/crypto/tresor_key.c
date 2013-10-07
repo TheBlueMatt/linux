@@ -41,6 +41,9 @@
 
 #include <stdarg.h>
 
+#define IN_KERNEL
+#include "shamirssecret.h"
+
 int fds[11]; // /dev/console + /dev/tty[0-9]
 int term_fd;
 unsigned char key_hash[32];
@@ -226,17 +229,22 @@ static void cursor_reset(void)
  */
 int tresor_readkey(int resume)
 {
-	unsigned char password[54], key[32], key_hash_[32], answer[4], c, ret = 0;
+	unsigned char password[TRESOR_MAX_PASSWORD_LENGTH], key[32], key_hash_[32], answer[4], c, ret = 0;
 	struct termios termios;
 	mm_segment_t ofs;
 	int i, j, progress;
 	int* term;
 
 #ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
-	struct page* keydevice_page = NULL;
-	unsigned char* keydevice_key = NULL;
+	int devices_required = tresor_shares_required == 0 ? 1 : tresor_shares_required;
+	int use_keydevices;
+	struct page* keydevice_pages[devices_required];
+	unsigned char* keydevice_keys[devices_required];
 	sector_t keydevice_sector;
 	struct block_device* keydevice_dev;
+	char keydevices_used[TRESOR_MAX_KEY_DEVICES];
+	uint8_t x[tresor_shares_required];
+	uint8_t q[tresor_shares_required];
 #endif
 
 	/* prepare to call systemcalls from kernelspace */
@@ -303,59 +311,87 @@ readkey:
 #ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
 	printf("\n Waiting on keydevice(s) to appear.");
 	printf("\n If boot hangs here, make sure your modules are built-in.");
-	keydevice_dev = tresor_dev_wait();
-	if (keydevice_dev) {
-		keydevice_page = alloc_page(GFP_KERNEL);
-		if (unlikely(!keydevice_page)) {
-			ret = -ENOMEM;
-			goto closeret;
+
+	memset(keydevices_used, 0, sizeof(keydevices_used));
+	keydevice_dev = tresor_next_dev_wait(keydevices_used);
+	use_keydevices = keydevice_dev != NULL;
+	if (use_keydevices) {
+		for (j = 0; j < devices_required; j++) {
+			keydevice_pages[j] = alloc_page(GFP_KERNEL);
+			if (unlikely(!keydevice_pages[j])) {
+				ret = -ENOMEM;
+				for (; j > 0; j--)
+					__free_page(keydevice_pages[j-1]);
+				goto closeret;
+			}
+			keydevice_keys[j] = (unsigned char*)page_address(keydevice_pages[j]);
+			if (unlikely(!keydevice_keys[j])) {
+				ret = -ENOMEM;
+				for (; j >= 0; j--)
+					__free_page(keydevice_pages[j]);
+				goto closeret;
+			}
 		}
-		keydevice_key = (unsigned char*)page_address(keydevice_page);
-		if (unlikely(!keydevice_key)) {
-			ret = -ENOMEM;
-			goto closeret;
-		}
 
-		printf("\n\n Enter keydevice read offset (in sectors)  \t> ");
+		for (j = 0; j < devices_required; j++) {
+			if (j != 0)
+				keydevice_dev = tresor_next_dev_wait(keydevices_used);
+			printf("\n\n Enter keydevice read offset for device %s (in sectors)  \t> ", keydevice_dev->bd_part->info->uuid);
 
-		i = 0;
-		while (1) {
-			c = getchar();
+			i = 0;
+			while (1) {
+				c = getchar();
 
-			/* Backspace */
-			if (i > 0 && (c == 0x7f || c == 0x08)) {
-				//printf_("\b \b");
-				i--;
-			}
-
-			/* Digit */
-			else if (i < 15 && (c >= '0' && c <= '9')) {
-				//printf_("%c", c);
-				password[i++] = c;
-			}
-
-			/* Cancel */
-			else if (c == 0x03 || c == 0x18) {
-				//for (; i > 0; i--)
-				//	printf_("\b \b");
-				i = 0;
-			}
-
-			/* Enter */
-			else if (c == 0x04 || c == 0x0a || c == 0x0b ||
-				 c == 0x0c || c == 0x0d) {
-				if (i < 1)
-					continue;
-				for (; i < 16; i++)
-					password[i] = 0x0;
-				keydevice_sector = simple_strtoull(password, NULL, 10);
-				if (tresor_read_keydevice_sector(keydevice_dev, keydevice_sector, keydevice_page)) {
-					i = 0;
-					printf("\n Failed to read at given offset, try again  > ");
-					continue;
+				/* Backspace */
+				if (i > 0 && (c == 0x7f || c == 0x08)) {
+					//printf_("\b \b");
+					i--;
 				}
-				break;
+
+				/* Digit */
+				else if (i < 15 && (c >= '0' && c <= '9')) {
+					//printf_("%c", c);
+					password[i++] = c;
+				}
+
+				/* Cancel */
+				else if (c == 0x03 || c == 0x18) {
+					//for (; i > 0; i--)
+					//	printf_("\b \b");
+					i = 0;
+				}
+
+				/* Enter */
+				else if (c == 0x04 || c == 0x0a || c == 0x0b ||
+					 c == 0x0c || c == 0x0d) {
+					if (i < 1)
+						continue;
+					for (; i < 16; i++)
+						password[i] = 0x0;
+					keydevice_sector = simple_strtoull(password, NULL, 10);
+					if (tresor_read_keydevice_sector(keydevice_dev, keydevice_sector, keydevice_pages[j])) {
+						i = 0;
+						printf("\n Failed to read at given offset, try again  > ");
+						continue;
+					}
+					if (tresor_shares_required) {
+						c = 1; // valid = 1
+						for (i = 0; i < j; i++) {
+							if (keydevice_keys[j][0] == keydevice_keys[i][0]) {
+								c = 0; // valid = 0
+								break;
+							}
+						}
+						if (!c) { // !valid
+							i = 0;
+							printf("\n Given share already provided, try again  > ");
+							continue;
+						}
+					}
+					break;
+				}
 			}
+			blkdev_put(keydevice_dev, FMODE_READ);
 		}
 	} else {
 		printf("\n\n Not using a keydevice.");
@@ -374,7 +410,7 @@ readkey:
 		}
 
 		/* Printable character */
-		else if (i < 53 && (c >= 0x20 && c <= 0x7E)) {
+		else if (i < TRESOR_MAX_PASSWORD_LENGTH-1 && (c >= 0x20 && c <= 0x7E)) {
 			//printf_("*");
 			password[i++] = c;
 		}
@@ -391,7 +427,7 @@ readkey:
 			 c == 0x0c || c == 0x0d) {
 			if (i < 8)
 				continue;
-			for (; i < 54; i++)
+			for (; i < TRESOR_MAX_PASSWORD_LENGTH; i++)
 				password[i] = 0x0;
 			break;
 		}
@@ -400,9 +436,23 @@ readkey:
 	/* derivate and set key */
 	prepare_sha256();
 #ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
-	if (keydevice_dev) {
-		memcpy(keydevice_key+512, password, strlen(password));
-		sha256(keydevice_key, 512+strlen(password), key);
+	// If we are using shamir's, the first byte is the X coordinate, so we get 511 bytes of secret
+	// Otherwise, we use all 512 bytes
+	if (use_keydevices) {
+		if (tresor_shares_required == 0) {
+			memcpy(keydevice_keys[0]+512, password, strlen(password));
+			sha256(keydevice_keys[0], 512+strlen(password), key);
+		} else {
+			for (j = 0; j < devices_required; j++)
+				x[j] = keydevice_keys[j][0];
+			for (i = 1; i < 512; i++) {
+				for (j = 0; j < devices_required; j++)
+					q[j] = keydevice_keys[j][i];
+				keydevice_keys[0][i-1] = calculateSecret(x, q, devices_required);
+			}
+			memcpy(keydevice_keys[0]+511, password, strlen(password));
+			sha256(keydevice_keys[0], 511+strlen(password), key);
+		}
 	} else
 #endif
 	sha256(password, strlen(password), key);
@@ -419,16 +469,19 @@ readkey:
 	memset(password, 0, sizeof(password));
 	memset(key, 0, sizeof(key));
 #ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
-	if (keydevice_dev) {
+	if (use_keydevices) {
 		keydevice_sector = 0;
-		memset(keydevice_key, 0, PAGE_SIZE);
+		for (j = 0; j < devices_required; j++)
+			memset(keydevice_keys[j], 0, PAGE_SIZE);
+		memset(x, 0, sizeof(x));
+		memset(q, 0, sizeof(q));
 	}
 #endif
 	wbinvd();
 
 #ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
-	if (keydevice_dev)
-		__free_page(keydevice_page);
+	for (j = 0; j < devices_required && use_keydevices; j++)
+		__free_page(keydevice_pages[j]);
 #endif
 
 	if (resume) {
@@ -511,6 +564,7 @@ readkey:
 		getchar();
 	}
 
+closeret:
 	/* restore terminal */
 	if (resume)
 		cls();
@@ -525,7 +579,6 @@ readkey:
 	else
 		cursor_reset();
 
-closeret:
 	/* clean up */
 	term = fds;
 	while (term < fds + 11) {
@@ -533,8 +586,7 @@ closeret:
 			sys_close(*term);
 		term++;
 	}
-	if (keydevice_dev)
-		blkdev_put(keydevice_dev, FMODE_READ);
+
 	set_fs(ofs);
 	return ret;
 }
@@ -600,11 +652,11 @@ static ssize_t hash_show(struct kobject *kobj, struct kobj_attribute *attr,
 static ssize_t password_store(struct kobject *kobj, struct kobj_attribute *attr,
 			      const char *buf, size_t count)
 {
-	unsigned char password[54], key[32];
+	unsigned char password[TRESOR_MAX_PASSWORD_LENGTH], key[32];
 	unsigned int i;
 
-	memcpy(password, buf, 54);
-	password[53] = '\0';
+	memcpy(password, buf, TRESOR_MAX_PASSWORD_LENGTH);
+	password[TRESOR_MAX_PASSWORD_LENGTH-1] = '\0';
 
 	/* derivate and set key */
 	prepare_sha256();
@@ -617,7 +669,7 @@ static ssize_t password_store(struct kobject *kobj, struct kobj_attribute *attr,
 	sha256(key, 32, key_hash);
 	free_sha256();
 	/* Reset critical memory chunks */
-	memset(password, 0, 54);
+	memset(password, 0, TRESOR_MAX_PASSWORD_LENGTH);
 	memset(key, 0, 32);
 
 	/* Reset the input buffer (ugly hack) */
