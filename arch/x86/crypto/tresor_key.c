@@ -37,6 +37,8 @@
 #include <linux/fs.h>
 #include <linux/delay.h>
 #include <linux/dma_remapping.h>
+#include <linux/tboot.h>
+
 #include <stdarg.h>
 
 int fds[11]; // /dev/console + /dev/tty[0-9]
@@ -295,6 +297,8 @@ readkey:
 	printf("\n >> TRESOR <<");
 	if (!intel_iommu_enabled)
 		printf("\n WARNING: IOMMU disabled, you are vulnerable to DMA attacks!");
+	if (!tboot_enabled())
+		printf("\n WARNING: Not in TXT boot measured env, you are vulnerable to some obscure DMA attacks!");
 
 #ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE
 	printf("\n Waiting on keydevice(s) to appear.");

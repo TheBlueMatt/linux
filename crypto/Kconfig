@@ -793,7 +793,7 @@ config CRYPTO_AES_ARM_BS
 
 config CRYPTO_TRESOR
 	bool "AES cipher, cold boot resistant (TRESOR)"
-	depends on X86 && 64BIT && CRYPTO_SHA256 = y && INTEL_IOMMU
+	depends on X86 && 64BIT && CRYPTO_SHA256 = y && INTEL_IOMMU && INTEL_TXT
 	select CRYPTO_ALGAPI
 	select CRYPTO_MANAGER
 	select CRYPTO_MANAGER2
