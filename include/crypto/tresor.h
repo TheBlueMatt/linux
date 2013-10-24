@@ -29,6 +29,11 @@ int  tresor_readkey(int resume);
 /* Key prompt on wakeup after suspend2ram */
 void tresor_dont_switch_console(int dont_switch);
 void tresor_thaw_processes(void);
+
+/* Optional mode in shamir's sharing where you can type an additional hex char (so you can split existing keys)
+   (NOTE: strictly 1/0, not >1)
+ */
+extern unsigned char tresor_shamirs_compat;
 #endif
 
 #ifdef CONFIG_CRYPTO_TRESOR_KEYDEVICE

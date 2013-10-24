@@ -398,6 +398,34 @@ readkey:
 	}
 #endif
 
+	if (tresor_shamirs_compat) {
+		password[0] = 0;
+		printf("\n\n Enter one hex octet (lowercase) to be prepended to password  \t> ");
+		for (i = 1; i > -1;) {
+			c = 'j';
+			while ((c < '0' || c > '9') && (c < 'a' || c > 'f') && (c != 0x7f && c != 0x08))
+				c = getchar();
+
+			/* Backspace */
+			if (c == 0x7f || c == 0x08) {
+				if (i != 1) {
+					printf_("\b \b");
+					i++;
+				}
+				password[0] >>= 4;
+				continue;
+			}
+
+			printf_("*");
+			if (c >= '0' && c <= '9')
+				password[0] |= c - '0';
+			else if (c >= 'a' && c <= 'f')
+				password[0] |= c - 'a' + 10;
+			password[0] <<= i*4;
+			i--;
+		}
+	}
+
 	i = 0;
 	printf("\n\n Enter password (minimum 8 characters)  \t> ");
 	while (1) {
@@ -410,9 +438,9 @@ readkey:
 		}
 
 		/* Printable character */
-		else if (i < TRESOR_MAX_PASSWORD_LENGTH-1 && (c >= 0x20 && c <= 0x7E)) {
+		else if (i < TRESOR_MAX_PASSWORD_LENGTH - tresor_shamirs_compat - 1 && (c >= 0x20 && c <= 0x7E)) {
 			//printf_("*");
-			password[i++] = c;
+			password[i++ + tresor_shamirs_compat] = c;
 		}
 
 		/* Cancel */
@@ -427,8 +455,8 @@ readkey:
 			 c == 0x0c || c == 0x0d) {
 			if (i < 8)
 				continue;
-			for (; i < TRESOR_MAX_PASSWORD_LENGTH; i++)
-				password[i] = 0x0;
+			for (; i < TRESOR_MAX_PASSWORD_LENGTH - tresor_shamirs_compat; i++)
+				password[i+tresor_shamirs_compat] = 0x0;
 			break;
 		}
 	}
@@ -440,8 +468,8 @@ readkey:
 	// Otherwise, we use all 512 bytes
 	if (use_keydevices) {
 		if (tresor_shares_required == 0) {
-			memcpy(keydevice_keys[0]+512, password, strlen(password));
-			sha256(keydevice_keys[0], 512+strlen(password), key);
+			memcpy(keydevice_keys[0]+512, password, strlen(&password[tresor_shamirs_compat])+tresor_shamirs_compat);
+			sha256(keydevice_keys[0], 512+strlen(&password[tresor_shamirs_compat])+tresor_shamirs_compat, key);
 		} else {
 			for (j = 0; j < devices_required; j++)
 				x[j] = keydevice_keys[j][0];
@@ -450,12 +478,12 @@ readkey:
 					q[j] = keydevice_keys[j][i];
 				keydevice_keys[0][i-1] = calculateSecret(x, q, devices_required);
 			}
-			memcpy(keydevice_keys[0]+511, password, strlen(password));
-			sha256(keydevice_keys[0], 511+strlen(password), key);
+			memcpy(keydevice_keys[0]+511, password, strlen(&password[tresor_shamirs_compat])+tresor_shamirs_compat);
+			sha256(keydevice_keys[0], 511+strlen(&password[tresor_shamirs_compat])+tresor_shamirs_compat, key);
 		}
 	} else
 #endif
-	sha256(password, strlen(password), key);
+		sha256(password, strlen(&password[tresor_shamirs_compat])+tresor_shamirs_compat, key);
 	for (i = 0; i < TRESOR_KDF_ITER; i++) {
 		sha256(key, 32, key_hash_);
 		sha256(key_hash_, 32, key);

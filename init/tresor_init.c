@@ -110,6 +110,16 @@ static int __init tresor_shares_required_setup(char *line)
 __setup("tresorsharesrequired=", tresor_shares_required_setup);
 
 
+// Optional compat mode for TRESOR shamir's mode
+unsigned char tresor_shamirs_compat = 0;
+static int __init tresor_shamirs_compat_setup(char *line)
+{
+	tresor_shamirs_compat = 1;
+	return 1;
+}
+__setup("tresorshamirscompat", tresor_shamirs_compat_setup);
+
+
 static struct block_device* tresor_next_dev_wait_intern(char* tresor_device_name[], char tresor_devices_used[]) {
 	int i;
 	dev_t TRESOR_DEV = 0;
