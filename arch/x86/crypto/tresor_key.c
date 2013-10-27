@@ -345,7 +345,7 @@ readkey:
 		for (j = 0; j < devices_required; j++) {
 			if (j != 0)
 				keydevice = tresor_next_dev_wait(keydevices_used);
-			printf("\n\n Enter keydevice read offset for device %s (in sectors)  \t> ", keydevice.name);
+			printf("\n\n Read offset for %s (sectors)  > ", keydevice.name);
 
 			i = 0;
 			while (1) {
