@@ -250,7 +250,7 @@ int tresor_readkey(int resume)
 	struct page* keydevice_pages[devices_required];
 	unsigned char* keydevice_keys[devices_required];
 	sector_t keydevice_sector;
-	struct block_device* keydevice_dev;
+	struct tresor_device_and_name keydevice;
 	char keydevices_used[TRESOR_MAX_KEY_DEVICES];
 	uint8_t x[tresor_shares_required];
 	uint8_t q[tresor_shares_required];
@@ -322,8 +322,8 @@ readkey:
 	printf("\n If boot hangs here, make sure your modules are built-in.");
 
 	memset(keydevices_used, 0, sizeof(keydevices_used));
-	keydevice_dev = tresor_next_dev_wait(keydevices_used);
-	use_keydevices = keydevice_dev != NULL;
+	keydevice = tresor_next_dev_wait(keydevices_used);
+	use_keydevices = keydevice.dev != NULL;
 	if (use_keydevices) {
 		for (j = 0; j < devices_required; j++) {
 			keydevice_pages[j] = alloc_page(GFP_KERNEL);
@@ -344,8 +344,8 @@ readkey:
 
 		for (j = 0; j < devices_required; j++) {
 			if (j != 0)
-				keydevice_dev = tresor_next_dev_wait(keydevices_used);
-			printf("\n\n Enter keydevice read offset for device %s (in sectors)  \t> ", keydevice_dev->bd_part->info->uuid);
+				keydevice = tresor_next_dev_wait(keydevices_used);
+			printf("\n\n Enter keydevice read offset for device %s (in sectors)  \t> ", keydevice.name);
 
 			i = 0;
 			while (1) {
@@ -378,7 +378,7 @@ readkey:
 					for (; i < 16; i++)
 						password[i] = 0x0;
 					keydevice_sector = simple_strtoull(password, NULL, 10);
-					if (tresor_read_keydevice_sector(keydevice_dev, keydevice_sector, keydevice_pages[j])) {
+					if (tresor_read_keydevice_sector(keydevice.dev, keydevice_sector, keydevice_pages[j])) {
 						i = 0;
 						printf("\n Failed to read at given offset, try again  > ");
 						continue;
@@ -400,7 +400,7 @@ readkey:
 					break;
 				}
 			}
-			blkdev_put(keydevice_dev, FMODE_READ);
+			blkdev_put(keydevice.dev, FMODE_READ);
 		}
 	} else {
 		printf("\n\n Not using a keydevice.");

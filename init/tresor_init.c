@@ -120,10 +120,12 @@ static int __init tresor_shamirs_compat_setup(char *line)
 __setup("tresorshamirscompat", tresor_shamirs_compat_setup);
 
 
-static struct block_device* tresor_next_dev_wait_intern(char* tresor_device_name[], char tresor_devices_used[]) {
+static struct tresor_device_and_name tresor_next_dev_wait_intern(char* tresor_device_name[], char tresor_devices_used[]) {
 	int i;
 	dev_t TRESOR_DEV = 0;
-	struct block_device* tresor_device = NULL;
+
+	struct tresor_device_and_name res;
+	res.dev = NULL;
 
 	for (i = 0; i < TRESOR_MAX_KEY_DEVICES; i++)
 	{
@@ -131,23 +133,26 @@ static struct block_device* tresor_next_dev_wait_intern(char* tresor_device_name
 			TRESOR_DEV = name_to_dev_t(tresor_device_name[i]);
 			if (TRESOR_DEV)
 			{
-				tresor_device = blkdev_get_by_dev(TRESOR_DEV, FMODE_READ, NULL);
-				if (!IS_ERR(tresor_device)) {
+				res.dev = blkdev_get_by_dev(TRESOR_DEV, FMODE_READ, NULL);
+				if (!IS_ERR(res.dev)) {
 					tresor_devices_used[i] = 1;
-					return tresor_device;
+					res.name = tresor_device_name[i];
+					return res;
 				}
 				TRESOR_DEV = 0;
 			}
 		}
 	}
-	return NULL;
+	res.dev = NULL; res.name = NULL;
+	return res;
 }
 
 /* Much of this copied from prepare_namespace(void) */
-struct block_device* tresor_next_dev_wait(char tresor_devices_used[])
+struct tresor_device_and_name tresor_next_dev_wait(char tresor_devices_used[])
 {
 	char* tresor_device_name[TRESOR_MAX_KEY_DEVICES];
-	struct block_device* tresor_device = NULL;
+	struct tresor_device_and_name res;
+	res.dev = NULL; res.name = NULL;
 
 	memset(tresor_device_name, 0, sizeof(tresor_device_name));
 
@@ -182,27 +187,27 @@ struct block_device* tresor_next_dev_wait(char tresor_devices_used[])
 			tresor_device_name[0] = saved_tresor_name;
 		}
 
-		tresor_device = tresor_next_dev_wait_intern(tresor_device_name, tresor_devices_used);
-		if (tresor_device)
-			return tresor_device;
+		res = tresor_next_dev_wait_intern(tresor_device_name, tresor_devices_used);
+		if (res.dev)
+			return res;
 
 		/* wait for any asynchronous scanning to complete */
 		printk(KERN_INFO "Waiting for tresor device(s)...\n");
 		while (driver_probe_done() != 0) {
-			tresor_device = tresor_next_dev_wait_intern(tresor_device_name, tresor_devices_used);
-			if (tresor_device)
-				return tresor_device;
+			res = tresor_next_dev_wait_intern(tresor_device_name, tresor_devices_used);
+			if (res.dev)
+				return res;
 
 			msleep(100);
 		}
 		async_synchronize_full();
 
 		/* Now we just wait... */
-		while (!tresor_device) {
+		while (!res.dev) {
 			msleep(100);
-			tresor_device = tresor_next_dev_wait_intern(tresor_device_name, tresor_devices_used);
+			res = tresor_next_dev_wait_intern(tresor_device_name, tresor_devices_used);
 		}
 	}
 
-	return tresor_device;
+	return res;
 }

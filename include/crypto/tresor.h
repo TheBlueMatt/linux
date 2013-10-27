@@ -40,9 +40,14 @@ extern unsigned char tresor_shamirs_compat;
 /* The maximum number of keydevices which can be used */
 #define TRESOR_MAX_KEY_DEVICES 10
 
-/* Get key devices, returning 0 on success, otherwise -1
-   tresor_devices should be of size max(tresor_shares_required, 1) */
-struct block_device* tresor_next_dev_wait(char tresor_devices_used[]);
+/* Contains the block_device* pointer and name which was used to find this block device */
+struct tresor_device_and_name {
+	struct block_device* dev;
+	char* name;
+};
+
+/* Get next key device. Returns a struct with dev = NULL if no key devices are needed */
+struct tresor_device_and_name tresor_next_dev_wait(char tresor_devices_used[]);
 
 /* Read the first 512 bytes from the given 512-byte sector on bdev into the given page */
 int tresor_read_keydevice_sector(struct block_device *bdev, sector_t sector, struct page *page);
