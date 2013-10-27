@@ -121,14 +121,12 @@ error:
 /* Print to appropriate fd.
  * This means either everything or term_fd
  */
-static int printf_(const char *fmt, ...)
+static int printf__(const char *fmt, va_list args)
 {
-	va_list args; int ret = -1, col = 80; char line[col]; int* term = fds;
+	int ret = -1, col = 80; char line[col]; int* term = fds;
 
-	va_start(args, fmt);
 	vsnprintf(line, col, fmt, args);
 	line[col-1] = 0;
-	va_end(args);
 
 	if (term_fd >= 0) {
 		ret = sys_write(term_fd, line, strlen(line));
@@ -145,6 +143,17 @@ static int printf_(const char *fmt, ...)
 	return ret;
 }
 
+static int printf_(const char *fmt, ...)
+{
+	va_list args; int res;
+
+	va_start(args, fmt);
+	res = printf__(fmt, args);
+	va_end(args);
+
+	return res;
+}
+
 /* Erase line before printing (workaround for weird consoles) */
 static int printf(const char *fmt, ...)
 {
@@ -152,7 +161,7 @@ static int printf(const char *fmt, ...)
 
 	printf_("\x1B[0G");
 	va_start(args, fmt);
-	res = printf_(fmt, args);
+	res = printf__(fmt, args);
 	va_end(args);
 
 	return res;
