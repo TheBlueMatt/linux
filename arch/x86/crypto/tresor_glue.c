@@ -40,6 +40,13 @@ asmlinkage void tresor_encblk_256(u8 *out, const u8 *in);
 asmlinkage void tresor_decblk_256(u8 *out, const u8 *in);
 
 
+/*
+ * Define the wait structures for async (d)e(n)cryption
+ */
+static DEFINE_PER_CPU(bool, is_keyset);
+static struct crypto_queue keywait_encrypt_queue;
+static struct crypto_queue keywait_decrypt_queue;
+static DEFINE_SPINLOCK(keywait_lock);
 
 /*
  * Set-key pseudo function: Setting the real key for TRESOR must be done
@@ -95,6 +102,9 @@ void tresor_encrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
 {
 	struct crypto_aes_ctx *ctx = crypto_tfm_ctx(tfm);
 
+	BUG_ON(!get_cpu_var(is_keyset));
+	put_cpu_var(is_keyset);
+
 	switch (ctx->key_length) {
 	case AES_KEYSIZE_128:
 		tresor_encblk_128(dst, src);
@@ -116,6 +126,9 @@ void tresor_decrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
 {
 	struct crypto_aes_ctx *ctx = crypto_tfm_ctx(tfm);
 
+	BUG_ON(!get_cpu_var(is_keyset));
+	put_cpu_var(is_keyset);
+
 	switch (ctx->key_length) {
 	case AES_KEYSIZE_128:
 		tresor_decblk_128(dst, src);
@@ -133,11 +146,6 @@ void tresor_decrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
 /*
  * Set AES key (the real function this time, not dummy as above)
  */
-static DEFINE_PER_CPU(bool, is_keyset);
-static struct crypto_queue keywait_encrypt_queue;
-static struct crypto_queue keywait_decrypt_queue;
-static DEFINE_SPINLOCK(keywait_lock);
-
 static int ablk_tresor_do_encrypt(struct ablkcipher_request *req, bool retVal);
 static int ablk_tresor_do_decrypt(struct ablkcipher_request *req, bool retVal);
 
