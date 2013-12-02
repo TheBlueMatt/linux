@@ -182,7 +182,7 @@ void tresor_setkey(const u8 *in_key)
 	spin_unlock(&keywait_lock);
 }
 
-static void tresor_notify_keyunset_current_cpu()
+static void tresor_notify_keyunset_current_cpu(void* unused)
 {
 	get_cpu_var(is_keyset) = false;
 	put_cpu_var(is_keyset);
@@ -203,23 +203,34 @@ void tresor_notify_keyunset(void)
 /*
  * Functions to wrap tresor in an async cipher to wait for key to be set.
  */
+//Stolen from cbc.c (EVILLLL)
+struct crypto_cbc_ctx {
+	struct crypto_cipher *child;
+};
+struct tresor_cbc_ctx {
+	struct crypto_blkcipher *tresor_cipher;
+	bool ecbc;
+};
+
 static int ablk_tresor_do_encrypt(struct ablkcipher_request *req, bool retVal)
 {
 	struct crypto_ablkcipher *tfm = crypto_ablkcipher_reqtfm(req);
-	struct crypto_blkcipher **ctx = crypto_ablkcipher_ctx(tfm);
+	struct tresor_cbc_ctx **ctx = crypto_ablkcipher_ctx(tfm);
 	struct blkcipher_desc desc;
 	unsigned long irq_flags;
 	int ret;
 
-	desc.tfm = *ctx;
+	if (!(*ctx) || !((*ctx)->tresor_cipher))
+		return -EINVAL;
+
+	desc.tfm = (*ctx)->tresor_cipher;
 	desc.info = req->info;
 	desc.flags = 0;
 
 	tresor_prolog(&irq_flags);
-	if (*ctx)
-		ret = crypto_blkcipher_encrypt_iv(&desc, req->dst, req->src, req->nbytes);
-	else
-		ret = -EINVAL;
+	if ((*ctx)->ecbc)
+		tresor_encrypt(crypto_cipher_tfm(((struct crypto_cbc_ctx*)crypto_blkcipher_ctx(desc.tfm))->child), desc.info, desc.info); // Encrypt the IV
+	ret = crypto_blkcipher_encrypt_iv(&desc, req->dst, req->src, req->nbytes);
 	tresor_epilog(&irq_flags);
 
 	if (!retVal && req->base.complete)
@@ -233,20 +244,22 @@ static int ablk_tresor_do_encrypt(struct ablkcipher_request *req, bool retVal)
 static int ablk_tresor_do_decrypt(struct ablkcipher_request *req, bool retVal)
 {
 	struct crypto_ablkcipher *tfm = crypto_ablkcipher_reqtfm(req);
-	struct crypto_blkcipher **ctx = crypto_ablkcipher_ctx(tfm);
+	struct tresor_cbc_ctx **ctx = crypto_ablkcipher_ctx(tfm);
 	struct blkcipher_desc desc;
 	unsigned long irq_flags;
 	int ret;
 
-	desc.tfm = *ctx;
+	if (!(*ctx) || !((*ctx)->tresor_cipher))
+		return -EINVAL;
+
+	desc.tfm = (*ctx)->tresor_cipher;
 	desc.info = req->info;
 	desc.flags = 0;
 
 	tresor_prolog(&irq_flags);
-	if (*ctx)
-		ret = crypto_blkcipher_decrypt_iv(&desc, req->dst, req->src, req->nbytes);
-	else
-		ret = -EINVAL;
+	if ((*ctx)->ecbc)
+		tresor_encrypt(crypto_cipher_tfm(((struct crypto_cbc_ctx*)crypto_blkcipher_ctx(desc.tfm))->child), desc.info, desc.info); // Encrypt the IV
+	ret = crypto_blkcipher_decrypt_iv(&desc, req->dst, req->src, req->nbytes);
 	tresor_epilog(&irq_flags);
 
 	if (!retVal && req->base.complete)
@@ -285,31 +298,41 @@ int ablk_tresor_decrypt(struct ablkcipher_request *req)
 	put_cpu_var(is_keyset);
 	return ret;
 }
-int ablk_tresor_cbc_init(struct crypto_tfm *tfm)
+int ablk_tresor_init(struct crypto_tfm *tfm, bool ecbc)
 {
-	struct crypto_blkcipher **ctx = crypto_tfm_ctx(tfm);
+	struct tresor_cbc_ctx **ctx = crypto_tfm_ctx(tfm);
 
-	*ctx = crypto_alloc_blkcipher("cbc(__tresor)", 0, 0);
-	if (IS_ERR(*ctx))
-		return PTR_ERR(*ctx);
+	*ctx = kmalloc(sizeof(struct tresor_cbc_ctx), GFP_KERNEL);
+
+	(*ctx)->tresor_cipher = crypto_alloc_blkcipher("cbc(__tresor)", 0, 0);
+	if (IS_ERR((*ctx)->tresor_cipher)) {
+		kfree(*ctx);
+		return PTR_ERR((*ctx)->tresor_cipher);
+	}
+	(*ctx)->ecbc = ecbc;
 
 	return 0;
 }
+int ablk_tresor_cbc_init(struct crypto_tfm *tfm) { return ablk_tresor_init(tfm, false); }
+int ablk_tresor_ecbc_init(struct crypto_tfm *tfm) { return ablk_tresor_init(tfm, true); }
 void ablk_tresor_exit(struct crypto_tfm *tfm)
 {
-	struct crypto_blkcipher **ctx = crypto_tfm_ctx(tfm);
+	struct tresor_cbc_ctx **ctx = crypto_tfm_ctx(tfm);
 
-	if (*ctx)
-		crypto_free_blkcipher(*ctx);
+	if (*ctx) {
+		if ((*ctx)->tresor_cipher)
+			crypto_free_blkcipher((*ctx)->tresor_cipher);
+		kfree(*ctx);
+	}
 	*ctx = NULL;
 }
 int ablk_tresor_setdummykey(struct crypto_ablkcipher *tfm, const u8 *key,
 							unsigned int keylen)
 {
-	struct crypto_blkcipher **ctx = crypto_ablkcipher_ctx(tfm);
+	struct tresor_cbc_ctx **ctx = crypto_ablkcipher_ctx(tfm);
 
-	if (*ctx)
-		return crypto_blkcipher_setkey(*ctx, key, keylen);
+	if (*ctx && (*ctx)->tresor_cipher)
+		return crypto_blkcipher_setkey((*ctx)->tresor_cipher, key, keylen);
 	else
 		return -EINVAL;
 }
@@ -338,7 +361,7 @@ static struct crypto_alg tresor_algs[] = {
 		}
 	}
 },
-{
+{ // Straight cbc
 	.cra_name		= "cbc(tresor)",
 	.cra_driver_name	= "tresor-cbc-driver",
 	.cra_priority		= 500,
@@ -349,6 +372,29 @@ static struct crypto_alg tresor_algs[] = {
 	.cra_type		= &crypto_ablkcipher_type,
 	.cra_module		= THIS_MODULE,
 	.cra_init		= ablk_tresor_cbc_init,
+	.cra_exit		= ablk_tresor_exit,
+	.cra_u = {
+		.ablkcipher = {
+			.min_keysize	= AES_MIN_KEY_SIZE,
+			.max_keysize	= AES_MAX_KEY_SIZE,
+			.ivsize		= AES_BLOCK_SIZE,
+			.setkey		= ablk_tresor_setdummykey,
+			.encrypt	= ablk_tresor_encrypt,
+			.decrypt	= ablk_tresor_decrypt,
+		},
+	}
+},
+{ // CBC with one extra round (ie essiv from plain64)
+	.cra_name		= "ecbc(tresor)",
+	.cra_driver_name	= "tresor-ecbc-driver",
+	.cra_priority		= 500,
+	.cra_flags		= CRYPTO_ALG_TYPE_ABLKCIPHER | CRYPTO_ALG_ASYNC,
+	.cra_blocksize		= AES_BLOCK_SIZE,
+	.cra_ctxsize		= sizeof(struct crypto_blkcipher **),
+	.cra_alignmask		= 3,
+	.cra_type		= &crypto_ablkcipher_type,
+	.cra_module		= THIS_MODULE,
+	.cra_init		= ablk_tresor_ecbc_init,
 	.cra_exit		= ablk_tresor_exit,
 	.cra_u = {
 		.ablkcipher = {
