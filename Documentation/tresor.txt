@@ -1,0 +1,50 @@
+TRESOR Runs Encryption Securely Outside of RAM
+
+It is based on work from researchers at Uni-Erlangen. TODO: Double-check this
+The original work/paper can be found at http://www1.informatik.uni-erlangen.de/tresor
+
+TRESOR does encryption slightly differently from the rest of dm-crypt, instead
+of having a key per device, TRESOR has one, unique, global key which is used
+for all TRESOR devices, and standard setkey calls are only used to pick the
+key size. TRESOR supports two options for loading this key, either during
+early boot a prompt will appear asking for a password, or via a SYSFS
+interface allowing user-space key writes. Except as otherwise noted, the rest
+of this documentation refers only to the first mode.
+
+Since the original version, various modifications have been made, most
+imporantly support for "keydevices". For simplicit's sake, instaed of relying
+on mounting a filesystem early in boot to load a keyfile, a single 512-byte
+sector can be used to salt the password. Because the key derivation function
+is simply repeated SHA256 over the input password, it is highly recommended
+that a keydevice be used. It also moves the authentication from "something
+you know" to "something you have and something you know". In order to use
+this mode, add a tresorkeydevice=DEVICE parameter to your kernel bootline
+with the syntax for DEVICE being the same as that for root=. For your own
+sanity, it is highly recommended that you format the device using a GPT and
+use the tresorkeydevice=PARTUUID=$PARTITION_UUID. During boot, you will be
+asked to provide the sector number which will be appended to the provided
+password before hashing to create the encryption key.
+
+In addition to a single keydevice, you can also opt to use shamir's secret
+sharing to split the (now 511-byte) secret across multiple devices. This
+might enable a case where multiple server administrators want to encrypt a
+drive but do not want to enable any single individual access to decrypt it.
+Given good software protection, this could enable a more secure, trusted
+drive encryption. To enable this feature, replace tresorkeydevice= with
+tresorsharedevice[0-9]= and add a tresorsharesrequired= parameter with the
+number of shares required to successfully reconstruct the secret. When
+prompted to enter a keydevice, simply plug in keydevices and enter the
+coresponding key sectors until enough shares have been collected, enter a
+password, and the secret will be appended to the password. To create the
+shares, use the shamir's implementation at
+https://github.com/TheBlueMatt/shamirs If you have a device with a non-
+shamir's TRESOR encryption already, and want to split the secret, add
+tresorshamirscompat to the boot arguments and only split the first 511
+bytes of the original key sector. You will then be asked to enter one byte
+in hex, where the last byte of the original keysector should be entered.
+
+Due to limitations in the kernel crypto architecture, dm-crypt is unable
+to initialize tresor-cbc-essiv (the recommended default). Instead, you can
+use tresor-ecbc-plain64 which is identical except for at which point the
+IV is encrypted (you can test by mounting the same device as
+__tresor-cbc-essiv, though using __tresor will panic on resume from suspend).
