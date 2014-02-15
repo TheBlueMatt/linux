@@ -23,6 +23,7 @@
 #define _PAGE_BIT_SPECIAL	_PAGE_BIT_UNUSED1
 #define _PAGE_BIT_CPA_TEST	_PAGE_BIT_UNUSED1
 #define _PAGE_BIT_SPLITTING	_PAGE_BIT_UNUSED1 /* only valid on a PSE pmd */
+#define _PAGE_BIT_CRYPTED	62	/* page is encrypted */
 #define _PAGE_BIT_NX           63       /* No execute: only valid after cpuid check */
 
 /* If _PAGE_BIT_PRESENT is clear, we use these: */
@@ -53,6 +54,17 @@
 #define _PAGE_HIDDEN	(_AT(pteval_t, 1) << _PAGE_BIT_HIDDEN)
 #else
 #define _PAGE_HIDDEN	(_AT(pteval_t, 0))
+#endif
+
+/*
+ * We use bit 62 to indicate a page exists, but is encrypted.
+ * Its possible we could steal some other bit to store this
+ * (as we have to unset the present bit for this), but I'm
+ * lazy, and if you're still running a 32-bit kernel, that's
+ * your own damn fault.
+ */
+#ifdef CONFIG_MEMCRYPT
+#define _PAGE_CRYPTED	(_AT(pteval_t, 1) << _PAGE_BIT_CRYPTED)
 #endif
 
 /*

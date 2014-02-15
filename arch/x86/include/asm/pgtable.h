@@ -330,6 +330,26 @@ static inline int pte_file_soft_dirty(pte_t pte)
 	return pte_flags(pte) & _PAGE_SOFT_DIRTY;
 }
 
+static inline pte_t pte_set_crypted(pte_t pte)
+{
+#ifdef CONFIG_MEMCRYPT
+	BUG_ON(pte_val(pte) & _PAGE_CRYPTED || ~pte_val(pte) & _PAGE_PRESENT);
+	return pte_clear_flags(pte_set_flags(pte, _PAGE_CRYPTED), _PAGE_PRESENT);
+#else
+	return pte_set_flags(pte, 0);
+#endif
+}
+
+static inline pte_t pte_clear_crypted(pte_t pte)
+{
+#ifdef CONFIG_MEMCRYPT
+	BUG_ON(~pte_val(pte) & _PAGE_CRYPTED || pte_val(pte) & _PAGE_PRESENT);
+	return pte_set_flags(pte_clear_flags(pte, _PAGE_CRYPTED), _PAGE_PRESENT);
+#else
+	return pte_clear_flags(pte, 0);
+#endif
+}
+
 /*
  * Mask out unsupported bits in a present pgprot.  Non-present pgprots
  * can use those bits for other purposes, so leave them be.
@@ -447,8 +467,21 @@ static inline int pte_same(pte_t a, pte_t b)
 
 static inline int pte_present(pte_t a)
 {
-	return pte_flags(a) & (_PAGE_PRESENT | _PAGE_PROTNONE |
-			       _PAGE_NUMA);
+	return (native_pte_val(a) & (_PAGE_PRESENT | _PAGE_PROTNONE |
+			       _PAGE_NUMA
+#ifdef CONFIG_MEMCRYPT
+					| _PAGE_CRYPTED
+#endif
+					)) != 0;
+}
+
+static inline int pte_crypted(pte_t a)
+{
+#ifdef CONFIG_MEMCRYPT
+	return (native_pte_val(a) & _PAGE_CRYPTED) != 0;
+#else
+	return 0;
+#endif
 }
 
 #define pte_accessible pte_accessible

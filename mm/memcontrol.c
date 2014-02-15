@@ -1516,6 +1516,7 @@ bool task_in_mem_cgroup(struct task_struct *task,
 int mem_cgroup_inactive_anon_is_low(struct lruvec *lruvec)
 {
 	unsigned long inactive_ratio;
+	unsigned long active_ratio;
 	unsigned long inactive;
 	unsigned long active;
 	unsigned long gb;
@@ -1529,7 +1530,18 @@ int mem_cgroup_inactive_anon_is_low(struct lruvec *lruvec)
 	else
 		inactive_ratio = 1;
 
-	return inactive * inactive_ratio < active;
+	active_ratio = 1;
+
+#ifdef CONFIG_MEMCRYPT
+	if (crypted_mem_ratio > 0)
+		inactive_ratio = crypted_mem_ratio;
+	if (clear_mem_ratio > 0)
+		active_ratio = clear_mem_ratio;
+	if (inactive * inactive_ratio < active * active_ratio)
+		return (active * active_ratio - inactive * inactive_ratio)/(active_ratio + inactive_ratio);
+#endif
+
+	return inactive * inactive_ratio < active * active_ratio;
 }
 
 #define mem_cgroup_from_res_counter(counter, member)	\

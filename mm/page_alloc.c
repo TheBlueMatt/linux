@@ -5705,6 +5705,12 @@ static void __meminit calculate_zone_inactive_ratio(struct zone *zone)
 	else
 		ratio = 1;
 
+#ifdef CONFIG_MEMCRYPT
+	if (crypted_mem_ratio > 0 || clear_mem_ratio > 0)
+		// Let inactive_anon_is_low_global deal with it
+		ratio = 1;
+#endif
+
 	zone->inactive_ratio = ratio;
 }
 

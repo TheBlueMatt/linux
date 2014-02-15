@@ -897,9 +897,16 @@ again:
 		return -ENOMEM;
 	src_pte = pte_offset_map(src_pmd, addr);
 	src_ptl = pte_lockptr(src_mm, src_pmd);
-	spin_lock_nested(src_ptl, SINGLE_DEPTH_NESTING);
 	orig_src_pte = src_pte;
 	orig_dst_pte = dst_pte;
+	//spin_lock_nested(src_ptl, SINGLE_DEPTH_NESTING);
+	if (!spin_trylock(src_ptl)) {
+printk(KERN_ERR "Running copy_pte_range through again!\n");
+		pte_unmap(orig_src_pte);
+		pte_unmap_unlock(orig_dst_pte, dst_ptl);
+		cond_resched();
+		goto again;
+	}
 	arch_enter_lazy_mmu_mode();
 
 	do {
@@ -1558,7 +1565,9 @@ split_fallthrough:
 		pte_unmap_unlock(ptep, ptl);
 		migration_entry_wait(mm, pmd, address);
 		goto split_fallthrough;
-	}
+	} else if (pte_crypted(pte))
+		goto no_page;
+
 	if ((flags & FOLL_NUMA) && pte_numa(pte))
 		goto no_page;
 	if ((flags & FOLL_WRITE) && !pte_write(pte))
@@ -3622,6 +3631,19 @@ out:
 }
 
 /*
+ * Handles decrypting a page in response to a fault.
+ */
+static int do_crypted_page(struct mm_struct *mm, struct vm_area_struct *vma,
+		unsigned long address, pte_t *page_table, pmd_t *pmd,
+		unsigned int flags, pte_t orig_pte)
+{
+	struct page *page = vm_normal_page(vma, address, orig_pte);
+	BUG_ON(!page);
+	decrypt_page(page, page_table);
+	return 0;
+}
+
+/*
  * These routines also need to handle stuff like marking pages dirty
  * and/or accessed for architectures that don't do it in hardware (most
  * RISC architectures).  The early dirtying is also good on the i386.
@@ -3641,7 +3663,14 @@ static int handle_pte_fault(struct mm_struct *mm,
 	pte_t entry;
 	spinlock_t *ptl;
 
-	entry = *pte;
+	// A page can fault for multiple reasons if it is crypted (eg WP + CRYPT)
+	if (pte_crypted(*pte)) {
+		do_crypted_page(mm, vma, address, pte, pmd, flags, *pte);
+		BUG_ON(pte_crypted(*pte));
+	}
+
+	entry = *pte; // Refresh after decryption
+
 	if (!pte_present(entry)) {
 		if (pte_none(entry)) {
 			if (vma->vm_ops) {

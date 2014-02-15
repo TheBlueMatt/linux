@@ -371,4 +371,9 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 #define ALLOC_CPUSET		0x40 /* check for correct cpuset */
 #define ALLOC_CMA		0x80 /* allow allocations from CMA areas */
 
+int encrypt_page(struct page* page);
+void decrypt_page(struct page* page, pte_t* ensure_pte);
+extern int crypted_mem_ratio;
+extern int clear_mem_ratio;
+
 #endif	/* __MM_INTERNAL_H */

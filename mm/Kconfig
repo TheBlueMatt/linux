@@ -169,6 +169,13 @@ config MOVABLE_NODE
 	  Say Y here if you want to hotplug a whole node.
 	  Say N here if you want kernel to use memory on all nodes evenly.
 
+config MEMCRYPT
+	bool "Enable encrypted memory"
+	depends on X86_64
+	depends on CRYPTO_TRESOR
+	depends on CRYPTO_TRESOR_SYSFS=n
+	depends on SWAP=n
+
 #
 # Only be set on architectures that have completely implemented memory hotplug
 # feature. If you are not sure, don't touch it.

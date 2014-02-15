@@ -1705,6 +1705,12 @@ static void shrink_active_list(unsigned long nr_to_scan,
 			}
 		}
 
+#ifdef CONFIG_MEMCRYPT
+		if (!encrypt_page(page)) {
+			list_add(&page->lru, &l_active);
+			continue;
+		}
+#endif
 		ClearPageActive(page);	/* we are de-activating */
 		list_add(&page->lru, &l_inactive);
 	}
@@ -1729,13 +1735,22 @@ static void shrink_active_list(unsigned long nr_to_scan,
 	free_hot_cold_page_list(&l_hold, 1);
 }
 
-#ifdef CONFIG_SWAP
+#if defined(CONFIG_SWAP) || defined(CONFIG_MEMCRYPT)
 static int inactive_anon_is_low_global(struct zone *zone)
 {
 	unsigned long active, inactive;
 
 	active = zone_page_state(zone, NR_ACTIVE_ANON);
 	inactive = zone_page_state(zone, NR_INACTIVE_ANON);
+
+#ifdef CONFIG_MEMCRYPT
+    if (crypted_mem_ratio > 0)
+        inactive *= crypted_mem_ratio;
+	if (clear_mem_ratio > 0)
+		active *= clear_mem_ratio;
+	if (inactive < active)
+		return (active - inactive)/(clear_mem_ratio + crypted_mem_ratio);
+#endif
 
 	if (inactive * zone->inactive_ratio < active)
 		return 1;
@@ -1756,8 +1771,10 @@ static int inactive_anon_is_low(struct lruvec *lruvec)
 	 * If we don't have swap space, anonymous page deactivation
 	 * is pointless.
 	 */
+#ifndef CONFIG_MEMCRYPT
 	if (!total_swap_pages)
 		return 0;
+#endif
 
 	if (!mem_cgroup_disabled())
 		return mem_cgroup_inactive_anon_is_low(lruvec);
@@ -2714,16 +2731,21 @@ static void age_active_anon(struct zone *zone, struct scan_control *sc)
 {
 	struct mem_cgroup *memcg;
 
+#ifndef CONFIG_MEMCRYPT
 	if (!total_swap_pages)
 		return;
+#endif
 
 	memcg = mem_cgroup_iter(NULL, NULL, NULL);
 	do {
 		struct lruvec *lruvec = mem_cgroup_zone_lruvec(zone, memcg);
 
-		if (inactive_anon_is_low(lruvec))
-			shrink_active_list(SWAP_CLUSTER_MAX, lruvec,
-					   sc, LRU_ACTIVE_ANON);
+		int pages = inactive_anon_is_low(lruvec);
+		// Every 10th of a second we encrypt 1/4th of the pages we need
+		// to get to the desired ratio
+		if (pages)
+			shrink_active_list(max(pages/4, SWAP_CLUSTER_MAX),
+						lruvec, sc, LRU_ACTIVE_ANON);
 
 		memcg = mem_cgroup_iter(NULL, memcg, NULL);
 	} while (memcg);
@@ -3171,7 +3193,11 @@ static void kswapd_try_to_sleep(pg_data_t *pgdat, int order, int classzone_idx)
 		reset_isolation_suitable(pgdat);
 
 		if (!kthread_should_stop())
+#ifdef CONFIG_MEMCRYPT
+			schedule_timeout(HZ/10);
+#else
 			schedule();
+#endif
 
 		set_pgdat_percpu_threshold(pgdat, calculate_pressure_threshold);
 	} else {
