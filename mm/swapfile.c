@@ -1118,7 +1118,7 @@ static int unuse_pte(struct vm_area_struct *vma, pmd_t *pmd,
 	struct page *swapcache;
 	struct mem_cgroup *memcg;
 	spinlock_t *ptl;
-	pte_t *pte, new_pte;
+	pte_t *pte;
 	int ret = 1;
 
 	swapcache = page;
@@ -1142,11 +1142,8 @@ static int unuse_pte(struct vm_area_struct *vma, pmd_t *pmd,
 	dec_mm_counter(vma->vm_mm, MM_SWAPENTS);
 	inc_mm_counter(vma->vm_mm, MM_ANONPAGES);
 	get_page(page);
-	new_pte = pte_mkold(mk_pte(page, vma->vm_page_prot));
-printk(KERN_ERR "Wait, I thought unuse_pte never happened?\n");
-	if (pte_crypted(swp_entry_to_pte(entry)))
-		new_pte = pte_set_crypted(new_pte);
-	set_pte_at(vma->vm_mm, addr, pte, new_pte);
+	set_pte_at(vma->vm_mm, addr, pte,
+		   pte_mkold(mk_pte(page, vma->vm_page_prot)));
 	if (page == swapcache)
 		page_add_anon_rmap(page, vma, addr);
 	else /* ksm created a completely new copy */
