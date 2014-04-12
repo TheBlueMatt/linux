@@ -90,6 +90,8 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 				 */
 				make_migration_entry_read(&entry);
 				newpte = swp_entry_to_pte(entry);
+				if (pte_crypted(oldpte))
+					newpte = pte_set_crypted(newpte);
 				if (pte_swp_soft_dirty(oldpte))
 					newpte = pte_swp_mksoft_dirty(newpte);
 				set_pte_at(mm, addr, pte, newpte);

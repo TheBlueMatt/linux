@@ -837,6 +837,11 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 					 */
 					make_migration_entry_read(&entry);
 					pte = swp_entry_to_pte(entry);
+					if (pte_crypted(*src_pte)) {
+						pte = pte_set_crypted(pte);
+printk(KERN_ERR "mm/memory.c:842: We MIGHT die!\n");
+} else
+printk(KERN_ERR "mm/memory.c:844 We're FUCKED!\n");
 					if (pte_swp_soft_dirty(*src_pte))
 						pte = pte_swp_mksoft_dirty(pte);
 					set_pte_at(src_mm, addr, src_pte, pte);
@@ -874,7 +879,7 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 	}
 
 out_set_pte:
-	set_pte_at(dst_mm, addr, dst_pte, pte);
+	set_pte_at(dst_mm, addr, dst_pte, pte); //XXX(crypted)
 	return 0;
 }
 
@@ -2107,7 +2112,7 @@ static int insert_page(struct vm_area_struct *vma, unsigned long addr,
 	get_page(page);
 	inc_mm_counter_fast(mm, MM_FILEPAGES);
 	page_add_file_rmap(page);
-	set_pte_at(mm, addr, pte, mk_pte(page, prot));
+	set_pte_at(mm, addr, pte, mk_pte(page, prot));//XXX(crypted)
 
 	retval = 0;
 	pte_unmap_unlock(pte, ptl);
@@ -2179,7 +2184,7 @@ static int insert_pfn(struct vm_area_struct *vma, unsigned long addr,
 
 	/* Ok, finally just insert the thing.. */
 	entry = pte_mkspecial(pfn_pte(pfn, prot));
-	set_pte_at(mm, addr, pte, entry);
+	set_pte_at(mm, addr, pte, entry); // XXX(crypted)
 	update_mmu_cache(vma, addr, pte); /* XXX: why not for insert_page? */
 
 	retval = 0;
@@ -2277,7 +2282,8 @@ static int remap_pte_range(struct mm_struct *mm, pmd_t *pmd,
 	arch_enter_lazy_mmu_mode();
 	do {
 		BUG_ON(!pte_none(*pte));
-		set_pte_at(mm, addr, pte, pte_mkspecial(pfn_pte(pfn, prot)));
+printk(KERN_ERR "mm/memory.c:2276 Not sure if we're screwed here...\n");
+		set_pte_at(mm, addr, pte, pte_mkspecial(pfn_pte(pfn, prot))); //XXX(crypted)
 		pfn++;
 	} while (pte++, addr += PAGE_SIZE, addr != end);
 	arch_leave_lazy_mmu_mode();
@@ -2842,7 +2848,7 @@ gotten:
 		 * mmu page tables (such as kvm shadow page tables), we want the
 		 * new page to be mapped directly into the secondary page table.
 		 */
-		set_pte_at_notify(mm, address, page_table, entry);
+		set_pte_at_notify(mm, address, page_table, entry); //XXX(crypted)
 		update_mmu_cache(vma, address, page_table);
 		if (old_page) {
 			/*
@@ -3134,6 +3140,11 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		exclusive = 1;
 	}
 	flush_icache_page(vma, page);
+	if (pte_crypted(orig_pte)) {
+		pte = pte_set_crypted(pte);
+printk(KERN_ERR "mm/memory.c:3132: WE'RE GONNA DIE!\n");
+} else
+printk(KERN_ERR "mm/memocy.c:3138: FUUUUCKKKKKKKKKKKKKKKKKKKKKKKKKK!\n");
 	if (pte_swp_soft_dirty(orig_pte))
 		pte = pte_mksoft_dirty(pte);
 	set_pte_at(mm, address, page_table, pte);
@@ -3278,7 +3289,7 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	inc_mm_counter_fast(mm, MM_ANONPAGES);
 	page_add_new_anon_rmap(page, vma, address);
 setpte:
-	set_pte_at(mm, address, page_table, entry);
+	set_pte_at(mm, address, page_table, entry); //XXX(crypted)
 
 	/* No need to invalidate - it was non-present before */
 	update_mmu_cache(vma, address, page_table);
@@ -3450,7 +3461,7 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 				get_page(dirty_page);
 			}
 		}
-		set_pte_at(mm, address, page_table, entry);
+		set_pte_at(mm, address, page_table, entry); // XXX(crypted)
 
 		/* no need to invalidate: a not-present page won't be cached */
 		update_mmu_cache(vma, address, page_table);
@@ -3590,7 +3601,7 @@ int do_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	}
 
 	pte = pte_mknonnuma(pte);
-	set_pte_at(mm, addr, ptep, pte);
+	set_pte_at(mm, addr, ptep, pte); //XXX(crypted)
 	update_mmu_cache(vma, addr, ptep);
 
 	page = vm_normal_page(vma, addr, pte);
