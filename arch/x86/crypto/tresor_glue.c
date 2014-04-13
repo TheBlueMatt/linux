@@ -98,14 +98,12 @@ static inline void tresor_epilog(unsigned long *irq_flags)
 /*
  * Encrypt one block
  */
-void tresor_encrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
+void tresor_encrypt(u8 *dst, const u8 *src, u32 key_length)
 {
-	struct crypto_aes_ctx *ctx = crypto_tfm_ctx(tfm);
-
 	BUG_ON(!get_cpu_var(is_keyset));
 	put_cpu_var(is_keyset);
 
-	switch (ctx->key_length) {
+	switch (key_length) {
 	case AES_KEYSIZE_128:
 		tresor_encblk_128(dst, src);
 		break;
@@ -118,18 +116,22 @@ void tresor_encrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
 	}
 }
 
+void tresor_encrypt_tfm(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
+{
+	struct crypto_aes_ctx *ctx = crypto_tfm_ctx(tfm);
+	tresor_encrypt(dst, src, ctx->key_length);
+}
+
 
 /*
  * Decrypt one block
  */
-void tresor_decrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
+void tresor_decrypt(u8 *dst, const u8 *src, u32 key_length)
 {
-	struct crypto_aes_ctx *ctx = crypto_tfm_ctx(tfm);
-
 	BUG_ON(!get_cpu_var(is_keyset));
 	put_cpu_var(is_keyset);
 
-	switch (ctx->key_length) {
+	switch (key_length) {
 	case AES_KEYSIZE_128:
 		tresor_decblk_128(dst, src);
 		break;
@@ -141,6 +143,12 @@ void tresor_decrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
 		break;
 	}
 }
+void tresor_decrypt_tfm(struct crypto_tfm *tfm, u8 *dst, const u8 *src)
+{
+	struct crypto_aes_ctx *ctx = crypto_tfm_ctx(tfm);
+	return tresor_decrypt(dst, src, ctx->key_length);
+}
+
 
 
 /*
@@ -229,7 +237,7 @@ static int ablk_tresor_do_encrypt(struct ablkcipher_request *req, bool retVal)
 
 	tresor_prolog(&irq_flags);
 	if ((*ctx)->ecbc)
-		tresor_encrypt(crypto_cipher_tfm(((struct crypto_cbc_ctx*)crypto_blkcipher_ctx(desc.tfm))->child), desc.info, desc.info); // Encrypt the IV
+		tresor_encrypt_tfm(crypto_cipher_tfm(((struct crypto_cbc_ctx*)crypto_blkcipher_ctx(desc.tfm))->child), desc.info, desc.info); // Encrypt the IV
 	ret = crypto_blkcipher_encrypt_iv(&desc, req->dst, req->src, req->nbytes);
 	tresor_epilog(&irq_flags);
 
@@ -258,7 +266,7 @@ static int ablk_tresor_do_decrypt(struct ablkcipher_request *req, bool retVal)
 
 	tresor_prolog(&irq_flags);
 	if ((*ctx)->ecbc)
-		tresor_encrypt(crypto_cipher_tfm(((struct crypto_cbc_ctx*)crypto_blkcipher_ctx(desc.tfm))->child), desc.info, desc.info); // Encrypt the IV
+		tresor_encrypt_tfm(crypto_cipher_tfm(((struct crypto_cbc_ctx*)crypto_blkcipher_ctx(desc.tfm))->child), desc.info, desc.info); // Encrypt the IV
 	ret = crypto_blkcipher_decrypt_iv(&desc, req->dst, req->src, req->nbytes);
 	tresor_epilog(&irq_flags);
 
@@ -356,8 +364,8 @@ static struct crypto_alg tresor_algs[] = {
 			.cia_min_keysize	= AES_MIN_KEY_SIZE,
 			.cia_max_keysize	= AES_MAX_KEY_SIZE,
 			.cia_setkey		= tresor_setdummykey,
-			.cia_encrypt		= tresor_encrypt,
-			.cia_decrypt		= tresor_decrypt
+			.cia_encrypt		= tresor_encrypt_tfm,
+			.cia_decrypt		= tresor_decrypt_tfm
 		}
 	}
 },

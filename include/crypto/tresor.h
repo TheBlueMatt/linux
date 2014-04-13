@@ -15,8 +15,8 @@
 #define TRESOR_RANDOM_CHARS 8
 
 /* TRESOR core functionality (enc, dec, setkey) */
-void tresor_encrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src);
-void tresor_decrypt(struct crypto_tfm *tfm, u8 *dst, const u8 *src);
+void tresor_encrypt(u8 *dst, const u8 *src, u32 key_length);
+void tresor_decrypt(u8 *dst, const u8 *src, u32 key_length);
 // Used to notify that we have gone to sleep (ie key disappeared)
 void tresor_notify_keyunset(void);
 void tresor_setkey(const u8 *in_key);
