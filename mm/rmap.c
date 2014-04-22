@@ -1610,7 +1610,11 @@ static int rmap_walk_anon(struct page *page, struct rmap_walk_control *rwc)
 		if (rwc->done && rwc->done(page))
 			break;
 	}
-	anon_vma_unlock_read(anon_vma);
+
+	if (rwc->anon_unlock)
+		rwc->anon_unlock(anon_vma);
+	else
+		anon_vma_unlock_read(anon_vma);
 	return ret;
 }
 
@@ -1644,7 +1648,8 @@ static int rmap_walk_file(struct page *page, struct rmap_walk_control *rwc)
 
 	if (!mapping)
 		return ret;
-	mutex_lock(&mapping->i_mmap_mutex);
+	if (!rwc->file_dont_lock)
+		mutex_lock(&mapping->i_mmap_mutex);
 	vma_interval_tree_foreach(vma, &mapping->i_mmap, pgoff, pgoff) {
 		unsigned long address = vma_address(page, vma);
 
@@ -1667,7 +1672,8 @@ static int rmap_walk_file(struct page *page, struct rmap_walk_control *rwc)
 	ret = rwc->file_nonlinear(page, mapping, rwc->arg);
 
 done:
-	mutex_unlock(&mapping->i_mmap_mutex);
+	if (!rwc->file_dont_lock)
+		mutex_unlock(&mapping->i_mmap_mutex);
 	return ret;
 }
 

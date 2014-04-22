@@ -252,7 +252,9 @@ struct rmap_walk_control {
 	int (*done)(struct page *page);
 	int (*file_nonlinear)(struct page *, struct address_space *, void *arg);
 	struct anon_vma *(*anon_lock)(struct page *page);
+	void (*anon_unlock)(struct anon_vma *);
 	bool (*invalid_vma)(struct vm_area_struct *vma, void *arg);
+	bool file_dont_lock;
 };
 
 int rmap_walk(struct page *page, struct rmap_walk_control *rwc);
