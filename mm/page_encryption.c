@@ -19,6 +19,7 @@
 #include <linux/mm.h>
 #include <linux/ksm.h>
 #include <linux/hugetlb.h>
+#include <linux/flex_array.h>
 
 #include <asm/page.h>
 #include <asm/tlb.h>
@@ -69,6 +70,34 @@ static void do_decrypt_page(unsigned char* pt) {
 	preempt_enable();
 }
 
+#ifndef CONFIG_TRANSPARENT_HUGEPAGE
+/*
+	* At what user virtual address is page expected in @vma?
+	*/
+static inline unsigned long
+__vma_address(struct page *page, struct vm_area_struct *vma)
+{
+	pgoff_t pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
+
+	if (unlikely(is_vm_hugetlb_page(vma)))
+		pgoff = page->index << huge_page_order(page_hstate(page));
+
+	return vma->vm_start + ((pgoff - vma->vm_pgoff) << PAGE_SHIFT);
+}
+
+static inline unsigned long
+vma_address(struct page *page, struct vm_area_struct *vma)
+{
+	unsigned long address = __vma_address(page, vma);
+
+	/* page should be within @vma mapping range */
+	VM_BUG_ON(address < vma->vm_start || address >= vma->vm_end);
+
+	return address;
+}
+#endif
+
+// based on page_check_address
 static pte_t * try_page_check_address(struct page *page, struct mm_struct *mm, unsigned long address,
 										int force_lock, spinlock_t **ptlp) {
 	pmd_t *pmd;
@@ -88,10 +117,10 @@ static pte_t * try_page_check_address(struct page *page, struct mm_struct *mm, u
 	pte = pte_offset_map(pmd, address);
 	ptl = pte_lockptr(mm, pmd);
 
-	if (!pte_present(*pte)) {
+	/*if (!pte_present(*pte)) {
 		pte_unmap(pte);
 		return NULL;
-	}
+	}*/
 
 	if (!force_lock && !spin_trylock(ptl)) {
 		*ptlp = ptl;
@@ -108,159 +137,215 @@ static pte_t * try_page_check_address(struct page *page, struct mm_struct *mm, u
 	return NULL;
 }
 
-static unsigned int tree_entries(struct anon_vma* anon_vma, pgoff_t pgoff) {
-	unsigned int entries = 0;
-	struct anon_vma_chain *avc;
-	anon_vma_interval_tree_foreach(avc, &anon_vma->rb_root, pgoff, pgoff) {
-		if (!avc)
-			break;
-		entries++;
-	}
-	return entries;
+struct page_action_pte {
+	pte_t *pte;
+	spinlock_t *ptl;
+	struct vm_area_struct *vma;
+};
+
+struct page_action_state {
+	int encrypt;
+	int already_done;
+	struct flex_array *ptes;
+	unsigned int pte_count;
+	pte_t *ensure_pte;
+	int found_pte;
+};
+
+static int try_lock_pte(struct page *page, struct vm_area_struct *vma, unsigned long address, void* arg) {
+	struct page_action_state *state = (struct page_action_state*) arg;
+
+	struct page_action_pte pte = {
+		.vma = vma,
+	};
+	pte.pte = try_page_check_address(page, vma->vm_mm, address, !state->pte_count, &pte.ptl);
+	if (pte.pte) {
+		if (pte.pte == state->ensure_pte)
+			state->found_pte = 1;
+		flex_array_put(state->ptes, state->pte_count++, &pte, GFP_ATOMIC);
+		if ((state->encrypt > 0 && pte_crypted(*pte.pte)) || (state->encrypt == 0 && !pte_crypted(*pte.pte)))
+			state->already_done++;
+		if (state->encrypt < 0) {
+			if (pte_crypted(*pte.pte))
+				state->already_done++;
+			else
+				state->already_done--;
+		}
+	} else if (pte.ptl)
+		return SWAP_FAIL;
+
+	return SWAP_AGAIN;
 }
 
+static int try_lock_pte_nonlinear(struct page *page, struct address_space *address_space, void* arg) {
+	//struct page_action_state *state = (struct page_action_state*) arg;
+	BUG();//XXX
+}
+
+static void do_nothing(struct anon_vma *vma) {}
+
 static int do_page_action(struct page *page, int encrypt, pte_t* ensure_pte, int times_around) {
-	int again = 0;
-	int ret = 0;
-	if (PageKsm(page)) {
-		BUG_ON(!encrypt);
-	} else if (PageAnon(page)) {
-		// Iterate over the anon_vma set, locking it (obv)
-		struct anon_vma* anon_vma = page_lock_anon_vma_read(page);
-		if (anon_vma) {
-			unsigned int mapcount = page_mapcount(page);
+	int again = 0, ret = 0, i;
+	unsigned int mapcount;
+	struct mmu_gather flush_tlb;
 
-			int mapped_offset = 0, already_done = 0, found_pte = ensure_pte ? 0 : 1, i;
+	// Modeled on try_to_unmap
+	struct page_action_state state = {
+		.encrypt = encrypt,
+		.ptes = flex_array_alloc(sizeof(struct page_action_pte), (1U << (8*sizeof(u16))) - 1, encrypt > 0 ? GFP_KERNEL : GFP_ATOMIC),
+		.ensure_pte = ensure_pte,
+		.found_pte = ensure_pte ? 0 : 1,
+	};
 
-			pgoff_t pgoff = page->index << (PAGE_CACHE_SHIFT - PAGE_SHIFT);
-			unsigned int entries = tree_entries(anon_vma, pgoff);
+	struct rmap_walk_control rwc = {
+		.rmap_one = try_lock_pte,
+		.arg = (void*) &state,
+		.file_nonlinear = try_lock_pte_nonlinear,
+		.anon_lock = page_anon_vma, 
+		.anon_unlock = do_nothing,
+		.file_dont_lock = 1,
+	};
 
-			pte_t* mapped_ptes[entries];
-			spinlock_t* mapped_ptls[entries];
-			struct vm_area_struct* mapped_vmas[entries];
+	struct anon_vma* anon_vma = NULL;
+	struct address_space* mapping = NULL;
 
-			struct mmu_gather flush_tlb;
+	BUG_ON(PageKsm(page)); // TODO?
+	BUG_ON(PageHuge(page)); // TODO?
+if (PageTransHuge(page))
+return 1;
+	BUG_ON(PageTransHuge(page)); //TODO?
 
-			// First go through and acquire locks for all relevant pmds (in page_check_address)
-			struct anon_vma_chain *avc;
-			anon_vma_interval_tree_foreach(avc, &anon_vma->rb_root, pgoff, pgoff) {
-				spinlock_t *ptl = NULL;
-
-				struct vm_area_struct *vma = avc->vma;
-				unsigned long address = vma_address(page, vma);
-				pte_t *pte = try_page_check_address(page, vma->vm_mm, address, !mapped_offset, &ptl);
-				if (pte) {
-					if (pte == ensure_pte)
-						found_pte = 1;
-					mapped_ptes[mapped_offset] = pte;
-					mapped_ptls[mapped_offset] = ptl;
-					mapped_vmas[mapped_offset++] = vma;
-				} else if (ptl) {
-					again = 1;
-					goto unlock_out;
-				}
-
-				if (!avc)
-					break;
-			}
-			BUG_ON(!found_pte);
-
-			// See copy_pte_range's locking scheme (ie during fork) -
-			// It will lock the source pmd and then increment mapcount with that lock held -
-			// We now have all pmds locked we knew about at the start, but there could be new
-			// ones that got added before we got to a given pmd.
-			// In that case we wouldn't get here until copy_pte_range had finished (incl the
-			// mapcount increment), so we can just check mapcount and run again if it has
-			// increased.
-			// Note that this could be a source of problems during a fork-heavy load.
-			// Note that the anon_vma is added to the page far before the pmd is locked so
-			// it is very possible to see a mapped_offset < mapcount
-			BUG_ON(!mapcount); // We better be mapped somewhere
-			if (page_mapcount(page) != mapcount) {
-				again = 1;
-printk(KERN_ERR "Missed mapcount %d of %d locked, %d done\n", mapped_offset, mapcount, already_done);
-				goto unlock_out;
-			}
-
-			i = 0;
-			while (i < mapped_offset) {
-				pte_t *pte = mapped_ptes[i];
-				if ((encrypt && pte_crypted(*pte)) || (!encrypt && !pte_crypted(*pte)))
-					already_done++;
-				i++;
-			}
-
-			// Its a bug if some pages are already in the state we're transitioning to
-			// but not all of them...
-			BUG_ON(already_done && already_done != mapped_offset);
-
-			// If we're already in the state we want or have no pages to handle
-			// (ie its a hugepage), just unlock and quit
-			if (!mapped_offset || already_done) {
-if (!mapped_offset && !encrypt)
-printk(KERN_ERR "Not mapped?\n");
-				ret = already_done;
-				goto unlock_out;
-			}
-
-			ret = 1; // Point of no return, we've done it now...
-
-			// Now that we have all the locks we need, go ahead and mark the page
-			// inaccessible if we're encrypting
-			if (encrypt) {
-				i = 0;
-				while (i < mapped_offset) {
-					pte_t *pte = mapped_ptes[i];
-					struct vm_area_struct *vma = mapped_vmas[i];
-					unsigned long address = vma_address(page, vma);
-					BUG_ON(pte_crypted(*pte)); // Final desperate sanity check
-					set_pte_at(vma->vm_mm, address, pte, pte_set_crypted(*pte));
-
-					flush_tlb.mm = vma->vm_mm;
-					flush_tlb.start = address;
-					flush_tlb.end = address + PAGE_SIZE - 1;
-					tlb_flush((&flush_tlb));
-					i++;
-				}
-			}
-
-			if (encrypt)
-				do_encrypt_page((unsigned char*) page_to_virt(page));
-			else
-				do_decrypt_page((unsigned char*) page_to_virt(page));
-
-			if (!encrypt) {
-				i = 0;
-				while (i < mapped_offset) {
-					pte_t *pte = mapped_ptes[i];
-					struct vm_area_struct *vma = mapped_vmas[i];
-					unsigned long address = vma_address(page, vma);
-					BUG_ON(!pte_crypted(*pte)); // Final desperate sanity check
-					set_pte_at(vma->vm_mm, address, pte, pte_clear_crypted(*pte));
-
-					flush_tlb.mm = vma->vm_mm;
-					flush_tlb.start = address;
-					flush_tlb.end = address + PAGE_SIZE - 1;
-					tlb_flush((&flush_tlb));
-					i++;
-				}
-			}
-			// Useless sanity check
-			BUG_ON(page_mapcount(page) != mapcount || entries != tree_entries(anon_vma, pgoff));
-unlock_out:
-			i = 0;
-			while (i < mapped_offset) {
-				pte_t *pte = mapped_ptes[i];
-				spinlock_t *ptl = mapped_ptls[i];
-				pte_unmap_unlock(pte, ptl);
-				i++;
-			}
-			page_unlock_anon_vma_read(anon_vma);
-		}
-	} else if (page->mapping) {
-		//TODO: File page
-		BUG_ON(!encrypt);
+	if (!state.ptes ||
+			flex_array_prealloc(state.ptes, 0, page_mapcount(page), encrypt > 0 ? GFP_KERNEL : GFP_ATOMIC)) {
+		// If we're not encrypting, this is a problem, otherwise we're under
+		// too much pressure, just fall through and try again later.
+		BUG_ON(encrypt < 1);
+		goto out;
 	}
+
+	if (PageAnon(page)) {
+		anon_vma = page_lock_anon_vma_read(page);
+		if (!anon_vma)
+			goto unlock_out;
+	} else {
+		if (encrypt >= 0)
+			lock_page(page);
+		mapping = page->mapping;
+		if (!mapping)
+			goto unlock_out;
+		mutex_lock(&mapping->i_mmap_mutex);
+	}
+
+	mapcount = page_mapcount(page);
+	if (!mapcount)
+		goto unlock_out;
+
+	//XXX: VM_BUG_ON_PAGE(!PageHuge(page) && PageTransHuge(page), page);
+
+	if (rmap_walk(page, &rwc) == SWAP_FAIL) {
+		again = 1;
+		goto unlock_out;
+	}
+	BUG_ON(!state.found_pte);
+
+	if (!state.pte_count)
+		goto unlock_out;
+
+	// See dup_mmap/copy_pte_range's locking scheme (ie during fork) -
+	// It will lock the source pmd and then increment mapcount with that lock held -
+	// We now have all pmds locked we knew about at the start, but there could be new
+	// ones that got added before we got to a given pmd.
+	// In that case we wouldn't get here until copy_pte_range had finished (incl the
+	// mapcount increment), so we can just check mapcount and run again if it has
+	// increased.
+	// Note that this could be a source of problems during a fork-heavy load.
+	// Note that the anon_vma is added to the page far before the pmd is locked so
+	// it is very possible to see a pte_count < mapcount
+	if (page_mapcount(page) != mapcount) {
+		again = 1;
+		goto unlock_out;
+	}
+
+	if ((encrypt < 0 || state.already_done) && abs(state.already_done) != state.pte_count) {
+if (ensure_pte)
+printk(KERN_ERR "%u %u map: %u/%u, ep: %d\n", state.already_done, state.pte_count, mapcount, page_mapcount(page), pte_crypted(*ensure_pte));
+else
+printk(KERN_ERR "%u %u map: %u/%u\n", state.already_done, state.pte_count, mapcount, page_mapcount(page));
+
+goto unlock_out;
+	}
+
+	if (encrypt < 0) {
+		// if (state.already_done == 0 ie not mapped) assume decrypted
+		ret = state.already_done > 0;
+		goto unlock_out;
+	}
+
+	ret = 1; // Point of no return, we've done it now...
+
+	if (state.already_done)
+		goto unlock_out;
+
+	if (encrypt) {
+		for (i = 0; i < state.pte_count; i++) {
+			struct page_action_pte* pte = flex_array_get(state.ptes, i);
+			BUG_ON(!pte);
+
+			unsigned long address = vma_address(page, pte->vma);
+			BUG_ON(pte_crypted(*pte->pte)); // Final desperate sanity check
+			set_pte_at(pte->vma->vm_mm, address, pte->pte, pte_set_crypted(*pte->pte));
+
+			flush_tlb.mm = pte->vma->vm_mm;
+			flush_tlb.start = address;
+			flush_tlb.end = address + PAGE_SIZE - 1;
+			tlb_flush((&flush_tlb));
+		}
+	}
+
+	if (encrypt)
+		do_encrypt_page((unsigned char*) page_to_virt(page));
+	else
+		do_decrypt_page((unsigned char*) page_to_virt(page));
+
+	if (!encrypt) {
+		for (i = 0; i < state.pte_count; i++) {
+			struct page_action_pte* pte = flex_array_get(state.ptes, i);
+			BUG_ON(!pte);
+
+			unsigned long address = vma_address(page, pte->vma);
+			BUG_ON(!pte_crypted(*pte->pte)); // Final desperate sanity check
+			set_pte_at(pte->vma->vm_mm, address, pte->pte, pte_clear_crypted(*pte->pte));
+
+			flush_tlb.mm = pte->vma->vm_mm;
+			flush_tlb.start = address;
+			flush_tlb.end = address + PAGE_SIZE - 1;
+			tlb_flush((&flush_tlb));
+		}
+	}
+
+	// Some (hopefully useless) sanity checks
+	BUG_ON(page_mapcount(page) != mapcount);
+
+unlock_out:
+	for (i = 0; i < state.pte_count; i++) {
+		struct page_action_pte* pte = flex_array_get(state.ptes, i);
+		BUG_ON(!pte);
+		pte_unmap_unlock(pte->pte, pte->ptl);
+	}
+
+	if (anon_vma)
+		page_unlock_anon_vma_read(anon_vma);
+	else if (!PageAnon(page)) {
+		if (mapping)
+			mutex_unlock(&mapping->i_mmap_mutex);
+		if (encrypt >= 0)
+			unlock_page(page);
+	}
+
+out:
+	if (state.ptes)
+		flex_array_free(state.ptes);
+
 	if (unlikely(again && !encrypt)) {
 		if (times_around % 3 != 2)
 			cond_resched();
@@ -269,10 +354,14 @@ printk(KERN_ERR "Going around again to %s, times_around: %d\n", encrypt ? "encry
 			set_current_state(TASK_INTERRUPTIBLE);
 			schedule_timeout(HZ/10);
 		}
-		BUG_ON(times_around > 20);//XXX: Random (FUCKING HUGE) constant?
+		BUG_ON(times_around > 18);//XXX: Random (FUCKING HUGE) constant?
 		return do_page_action(page, encrypt, ensure_pte, times_around+1);
 	}
 	return ret;
+}
+
+int page_crypted(struct page *page) {
+	return do_page_action(page, -1, NULL, 0);
 }
 
 int encrypt_page(struct page *page) {

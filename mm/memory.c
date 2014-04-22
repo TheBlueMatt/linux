@@ -3322,6 +3322,7 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	struct vm_fault vmf;
 	int ret;
 	int page_mkwrite = 0;
+	int set_pte_crypted = 0;
 
 	/*
 	 * If we do COW later, allocate page befor taking lock_page()
@@ -3412,6 +3413,10 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 
 	}
 
+	// Before we lock the pte...
+	if (page)
+		set_pte_crypted = page_crypted(page);
+
 	page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
 
 	/*
@@ -3432,6 +3437,8 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 			entry = maybe_mkwrite(pte_mkdirty(entry), vma);
 		else if (pte_file(orig_pte) && pte_file_soft_dirty(orig_pte))
 			pte_mksoft_dirty(entry);
+		if (set_pte_crypted)
+			entry = pte_set_crypted(entry);
 		if (anon) {
 			inc_mm_counter_fast(mm, MM_ANONPAGES);
 			page_add_new_anon_rmap(page, vma, address);
