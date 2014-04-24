@@ -2782,6 +2782,9 @@ out:
 
 	memcg_kmem_commit_charge(page, memcg, order);
 
+if (page)
+page->cryptable = 0;
+
 	return page;
 }
 EXPORT_SYMBOL(__alloc_pages_nodemask);

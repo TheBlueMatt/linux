@@ -1810,6 +1810,15 @@ static int inactive_file_is_low(struct lruvec *lruvec)
 	inactive = get_lru_size(lruvec, LRU_INACTIVE_FILE);
 	active = get_lru_size(lruvec, LRU_ACTIVE_FILE);
 
+#ifdef CONFIG_MEMCRYPT
+    if (crypted_mem_ratio > 0)
+        inactive *= crypted_mem_ratio;
+	if (clear_mem_ratio > 0)
+		active *= clear_mem_ratio;
+	if (inactive < active)
+		return (active - inactive)/(clear_mem_ratio + crypted_mem_ratio);
+#endif
+
 	return active > inactive;
 }
 

@@ -2878,8 +2878,10 @@ BUG_ON(pte_crypted(orig_pte));//TODO: Just set?
 	} else
 		mem_cgroup_uncharge_page(new_page);
 
-	if (new_page)
+	if (new_page) {
+new_page->cryptable = 1;
 		page_cache_release(new_page);
+}
 unlock:
 	pte_unmap_unlock(page_table, ptl);
 	if (mmun_end > mmun_start)
@@ -3234,7 +3236,7 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, pte_t *page_table, pmd_t *pmd,
 		unsigned int flags)
 {
-	struct page *page;
+	struct page *page = NULL;
 	spinlock_t *ptl;
 	pte_t entry;
 
@@ -3287,6 +3289,8 @@ setpte:
 	update_mmu_cache(vma, address, page_table);
 unlock:
 	pte_unmap_unlock(page_table, ptl);
+if (page)
+page->cryptable = 1;
 	return 0;
 release:
 	mem_cgroup_uncharge_page(page);
@@ -3417,8 +3421,8 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	}
 
 	// Before we lock the pte...
-	if (page)
-		set_pte_crypted = page_crypted(page);
+	if (vmf.page)
+		set_pte_crypted = page_crypted(vmf.page);
 
 	page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
 
@@ -3457,6 +3461,11 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 
 		/* no need to invalidate: a not-present page won't be cached */
 		update_mmu_cache(vma, address, page_table);
+
+if (cow_page)
+cow_page->cryptable = 1;
+if (vmf.page)
+vmf.page->cryptable = 1;
 	} else {
 		if (cow_page)
 			mem_cgroup_uncharge_page(cow_page);

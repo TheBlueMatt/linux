@@ -82,6 +82,7 @@ __vma_address(struct page *page, struct vm_area_struct *vma)
 	if (unlikely(is_vm_hugetlb_page(vma)))
 		pgoff = page->index << huge_page_order(page_hstate(page));
 
+	return vma->vm_start + ((pgoff - vma->vm_pgoff) << PAGE_SHIFT);
 }
 
 static inline unsigned long
@@ -430,14 +431,14 @@ void decrypt_page(struct page *page, pte_t* ensure_pte) {
 }
 
 int cant_encrypt(struct page *page, unsigned long vm_flags) {
+	if (!PageAnon(page) && !page->cryptable)
+		return 1;
 	// This could be dangerous...
 	if (ZERO_PAGE(0) == page)
 		return 1;
 	// Don't encrypt exe pages
-	if ((vm_flags | VM_EXEC) && !PageAnon(page))
-		return 1;
-	if (PageTransHuge(page))
-		return 0;//TODO?
+	/*if ((vm_flags | VM_EXEC) && !PageAnon(page))
+		return 1;*/
 	return 0;
 }
 
