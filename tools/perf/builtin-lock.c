@@ -87,7 +87,7 @@ struct lock_stat {
  * Imported from include/linux/sched.h.
  * Should this be synchronized?
  */
-#define MAX_LOCK_DEPTH 48
+#define MAX_LOCK_DEPTH 128
 
 /*
  * struct lock_seq_stat:
