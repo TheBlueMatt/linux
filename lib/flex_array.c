@@ -100,15 +100,11 @@ struct flex_array *flex_array_alloc(int element_size, unsigned int total,
 	}
 
 	/* max_size will end up 0 if element_size > PAGE_SIZE */
-	if (total > max_size) {
-printk(KERN_ERR "1 %u %u\n", total, max_size);
+	if (total > max_size)
 		return NULL;
-}
 	ret = kzalloc(sizeof(struct flex_array), flags);
-	if (!ret) {
-printk(KERN_ERR "2 %u\n", ret);
+	if (!ret)
 		return NULL;
-}
 	ret->element_size = element_size;
 	ret->total_nr_elements = total;
 	ret->elems_per_part = elems_per_part;
