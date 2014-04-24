@@ -901,7 +901,6 @@ again:
 	orig_dst_pte = dst_pte;
 	//spin_lock_nested(src_ptl, SINGLE_DEPTH_NESTING);
 	if (!spin_trylock(src_ptl)) {
-printk(KERN_ERR "Running copy_pte_range through again!\n");
 		pte_unmap(orig_src_pte);
 		pte_unmap_unlock(orig_dst_pte, dst_ptl);
 		cond_resched();
@@ -3674,6 +3673,7 @@ static int handle_pte_fault(struct mm_struct *mm,
 {
 	pte_t entry;
 	spinlock_t *ptl;
+	int ret;
 
 	// A page can fault for multiple reasons if it is crypted (eg WP + CRYPT)
 	if (pte_crypted(*pte)) {
@@ -3686,16 +3686,23 @@ static int handle_pte_fault(struct mm_struct *mm,
 	if (!pte_present(entry)) {
 		if (pte_none(entry)) {
 			if (vma->vm_ops) {
-				if (likely(vma->vm_ops->fault))
-					return do_linear_fault(mm, vma, address,
+				if (likely(vma->vm_ops->fault)) {
+					ret = do_linear_fault(mm, vma, address,
 						pte, pmd, flags, entry);
+					if (pte_crypted(*pte))
+						do_crypted_page(mm, vma, address, pte, pmd, flags, *pte);
+					return ret;
+				}
 			}
 			return do_anonymous_page(mm, vma, address,
 						 pte, pmd, flags);
 		}
-		if (pte_file(entry))
-			return do_nonlinear_fault(mm, vma, address,
+		if (pte_file(entry)) {
+			ret = do_nonlinear_fault(mm, vma, address,
 					pte, pmd, flags, entry);
+			BUG_ON(pte_crypted(*pte));
+			return ret;
+		}
 		return do_swap_page(mm, vma, address,
 					pte, pmd, flags, entry);
 	}

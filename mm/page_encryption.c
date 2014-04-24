@@ -72,8 +72,8 @@ static void do_decrypt_page(unsigned char* pt) {
 
 #ifndef CONFIG_TRANSPARENT_HUGEPAGE
 /*
-	* At what user virtual address is page expected in @vma?
-	*/
+ * At what user virtual address is page expected in @vma?
+ */
 static inline unsigned long
 __vma_address(struct page *page, struct vm_area_struct *vma)
 {
@@ -82,7 +82,6 @@ __vma_address(struct page *page, struct vm_area_struct *vma)
 	if (unlikely(is_vm_hugetlb_page(vma)))
 		pgoff = page->index << huge_page_order(page_hstate(page));
 
-	return vma->vm_start + ((pgoff - vma->vm_pgoff) << PAGE_SHIFT);
 }
 
 static inline unsigned long
@@ -117,10 +116,10 @@ static pte_t * try_page_check_address(struct page *page, struct mm_struct *mm, u
 	pte = pte_offset_map(pmd, address);
 	ptl = pte_lockptr(mm, pmd);
 
-	/*if (!pte_present(*pte)) {
+	if (!pte_present(*pte)) {
 		pte_unmap(pte);
 		return NULL;
-	}*/
+	}
 
 	if (!force_lock && !spin_trylock(ptl)) {
 		*ptlp = ptl;
@@ -146,32 +145,38 @@ struct page_action_pte {
 struct page_action_state {
 	int encrypt;
 	int already_done;
-	struct flex_array *ptes;
+
+	struct page_action_pte *ptes;
 	unsigned int pte_count;
+	unsigned int ptes_limit;
+
 	pte_t *ensure_pte;
 	int found_pte;
+
+	unsigned long vm_flags;
 };
 
 static int try_lock_pte(struct page *page, struct vm_area_struct *vma, unsigned long address, void* arg) {
 	struct page_action_state *state = (struct page_action_state*) arg;
 
-	struct page_action_pte pte = {
-		.vma = vma,
-	};
-	pte.pte = try_page_check_address(page, vma->vm_mm, address, !state->pte_count, &pte.ptl);
-	if (pte.pte) {
-		if (pte.pte == state->ensure_pte)
+	struct page_action_pte *pte = &state->ptes[state->pte_count];
+	pte->vma = vma;
+	pte->ptl = NULL;
+	pte->pte = try_page_check_address(page, vma->vm_mm, address, !state->pte_count, &pte->ptl);
+	if (pte->pte) {
+		if (pte->pte == state->ensure_pte)
 			state->found_pte = 1;
-		flex_array_put(state->ptes, state->pte_count++, &pte, GFP_ATOMIC);
-		if ((state->encrypt > 0 && pte_crypted(*pte.pte)) || (state->encrypt == 0 && !pte_crypted(*pte.pte)))
+		if ((state->encrypt > 0 && pte_crypted(*pte->pte)) || (state->encrypt == 0 && !pte_crypted(*pte->pte)))
 			state->already_done++;
 		if (state->encrypt < 0) {
-			if (pte_crypted(*pte.pte))
+			if (pte_crypted(*pte->pte))
 				state->already_done++;
 			else
 				state->already_done--;
 		}
-	} else if (pte.ptl)
+		state->vm_flags |= vma->vm_mm->flags;
+		state->pte_count++;
+	} else if (pte->ptl)
 		return SWAP_FAIL;
 
 	return SWAP_AGAIN;
@@ -182,7 +187,20 @@ static int try_lock_pte_nonlinear(struct page *page, struct address_space *addre
 	BUG();//XXX
 }
 
+
+static int count_pte(struct page *page, struct vm_area_struct *vma, unsigned long address, void* arg) {
+	struct page_action_state *state = (struct page_action_state*) arg;
+	state->ptes_limit++;
+	return SWAP_AGAIN;
+}
+
 static void do_nothing(struct anon_vma *vma) {}
+
+static atomic_t transhuge = ATOMIC_INIT(0);
+static atomic_t noflex = ATOMIC_INIT(0);
+static atomic_t ptelock = ATOMIC_INIT(0);
+static atomic_t success = ATOMIC_INIT(0);
+static atomic_t total = ATOMIC_INIT(0);
 
 static int do_page_action(struct page *page, int encrypt, pte_t* ensure_pte, int times_around) {
 	int again = 0, ret = 0, i;
@@ -192,7 +210,6 @@ static int do_page_action(struct page *page, int encrypt, pte_t* ensure_pte, int
 	// Modeled on try_to_unmap
 	struct page_action_state state = {
 		.encrypt = encrypt,
-		.ptes = flex_array_alloc(sizeof(struct page_action_pte), (1U << (8*sizeof(u16))) - 1, encrypt > 0 ? GFP_KERNEL : GFP_ATOMIC),
 		.ensure_pte = ensure_pte,
 		.found_pte = ensure_pte ? 0 : 1,
 	};
@@ -206,35 +223,45 @@ static int do_page_action(struct page *page, int encrypt, pte_t* ensure_pte, int
 		.file_dont_lock = 1,
 	};
 
+	struct rmap_walk_control count_rwc = {
+		.rmap_one = count_pte,
+		.arg = (void*) &state,
+		.file_nonlinear = try_lock_pte_nonlinear, //XXX
+		.anon_lock = page_anon_vma,
+		.anon_unlock = do_nothing,
+		.file_dont_lock = 1,
+	};
+
 	struct anon_vma* anon_vma = NULL;
 	struct address_space* mapping = NULL;
 
 	BUG_ON(PageKsm(page)); // TODO?
 	BUG_ON(PageHuge(page)); // TODO?
-if (PageTransHuge(page))
-return 1;
+if (PageTransHuge(page)) {
+atomic_inc(&transhuge);
+return 0;
+}
 	BUG_ON(PageTransHuge(page)); //TODO?
-
-	if (!state.ptes ||
-			flex_array_prealloc(state.ptes, 0, page_mapcount(page), encrypt > 0 ? GFP_KERNEL : GFP_ATOMIC)) {
-		// If we're not encrypting, this is a problem, otherwise we're under
-		// too much pressure, just fall through and try again later.
-		BUG_ON(encrypt < 1);
-		goto out;
-	}
 
 	if (PageAnon(page)) {
 		anon_vma = page_lock_anon_vma_read(page);
 		if (!anon_vma)
-			goto unlock_out;
+			return ret;
 	} else {
 		if (encrypt >= 0)
 			lock_page(page);
 		mapping = page->mapping;
-		if (!mapping)
-			goto unlock_out;
+		if (!mapping) {
+			if (encrypt >= 0)
+				unlock_page(page);
+			return ret;
+		}
 		mutex_lock(&mapping->i_mmap_mutex);
 	}
+
+	BUG_ON(rmap_walk(page, &count_rwc) != SWAP_AGAIN);
+	struct page_action_pte ptes[state.ptes_limit];
+	state.ptes = ptes;
 
 	mapcount = page_mapcount(page);
 	if (!mapcount)
@@ -244,9 +271,12 @@ return 1;
 
 	if (rmap_walk(page, &rwc) == SWAP_FAIL) {
 		again = 1;
+atomic_inc(&ptelock);
 		goto unlock_out;
 	}
 	BUG_ON(!state.found_pte);
+
+	BUG_ON(encrypt > 1 && cant_encrypt(page, state.vm_flags));
 
 	if (!state.pte_count)
 		goto unlock_out;
@@ -277,6 +307,7 @@ goto unlock_out;
 
 	if (encrypt < 0) {
 		// if (state.already_done == 0 ie not mapped) assume decrypted
+BUG_ON(state.already_done == 0);
 		ret = state.already_done > 0;
 		goto unlock_out;
 	}
@@ -288,8 +319,7 @@ goto unlock_out;
 
 	if (encrypt) {
 		for (i = 0; i < state.pte_count; i++) {
-			struct page_action_pte* pte = flex_array_get(state.ptes, i);
-			BUG_ON(!pte);
+			struct page_action_pte* pte = &state.ptes[i];
 
 			unsigned long address = vma_address(page, pte->vma);
 			BUG_ON(pte_crypted(*pte->pte)); // Final desperate sanity check
@@ -309,8 +339,7 @@ goto unlock_out;
 
 	if (!encrypt) {
 		for (i = 0; i < state.pte_count; i++) {
-			struct page_action_pte* pte = flex_array_get(state.ptes, i);
-			BUG_ON(!pte);
+			struct page_action_pte* pte = &state.ptes[i];
 
 			unsigned long address = vma_address(page, pte->vma);
 			BUG_ON(!pte_crypted(*pte->pte)); // Final desperate sanity check
@@ -328,8 +357,7 @@ goto unlock_out;
 
 unlock_out:
 	for (i = 0; i < state.pte_count; i++) {
-		struct page_action_pte* pte = flex_array_get(state.ptes, i);
-		BUG_ON(!pte);
+		struct page_action_pte* pte = &state.ptes[i];
 		pte_unmap_unlock(pte->pte, pte->ptl);
 	}
 
@@ -341,10 +369,6 @@ unlock_out:
 		if (encrypt >= 0)
 			unlock_page(page);
 	}
-
-out:
-	if (state.ptes)
-		flex_array_free(state.ptes);
 
 	if (unlikely(again && !encrypt)) {
 		if (times_around % 3 != 2)
@@ -366,18 +390,23 @@ int page_crypted(struct page *page) {
 
 int encrypt_page(struct page *page) {
 	// Print page encryption/decryption counts
-	static unsigned long nr, success;
 	static unsigned long resume = 0;
 
 	int res = do_page_action(page, 1, NULL, 0);
 
-	nr++;
+	atomic_inc(&total);
 	if (res)
-		success++;
+		atomic_inc(&success);
 	if (!time_before(jiffies, resume)) {
-		printk(KERN_ERR "Encrypted %lu/%lu pages\n", success, nr);
+		printk(KERN_ERR "Encrypted %d/%d pages\n", atomic_read(&success), atomic_read(&total));
+printk(KERN_ERR "Reasons for failure: %d ptelock %d noflex %d transhuge\n", atomic_read(&ptelock), atomic_read(&noflex), atomic_read(&transhuge));
+atomic_set(&success, 0);
+atomic_set(&total, 0);
+atomic_set(&ptelock, 0);
+atomic_set(&noflex, 0);
+atomic_set(&transhuge, 0);
 		resume = jiffies + 5*HZ;
-		nr = 0; success = 0;
+		//nr = 0; success = 0;
 	}
 	return res;
 }
@@ -398,6 +427,16 @@ void decrypt_page(struct page *page, pte_t* ensure_pte) {
 		resume = jiffies + 5*HZ;
 		nr = 0; success = 0;
 	}
+}
+
+int cant_encrypt(struct page *page, unsigned long vm_flags) {
+	// This could be dangerous...
+	if (ZERO_PAGE(0) == page)
+		return 1;
+	// Don't encrypt exe pages
+	if ((vm_flags | VM_EXEC) && !PageAnon(page))
+		return 0;
+	return 0;
 }
 
 int crypted_mem_ratio = -1;

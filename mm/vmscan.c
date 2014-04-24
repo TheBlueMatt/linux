@@ -1706,7 +1706,7 @@ static void shrink_active_list(unsigned long nr_to_scan,
 		}
 
 #ifdef CONFIG_MEMCRYPT
-		if (!encrypt_page(page)) {
+		if (cant_encrypt(page, vm_flags) || !encrypt_page(page)) {
 			list_add(&page->lru, &l_active);
 			continue;
 		}
