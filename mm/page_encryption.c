@@ -237,11 +237,11 @@ static int do_page_action(struct page *page, int encrypt, pte_t* ensure_pte, int
 
 	BUG_ON(PageKsm(page)); // TODO?
 	BUG_ON(PageHuge(page)); // TODO?
-if (PageTransHuge(page)) {
+/*if (PageTransHuge(page)) {
 atomic_inc(&transhuge);
 return 0;
-}
-	BUG_ON(PageTransHuge(page)); //TODO?
+}*/
+//	BUG_ON(PageTransHuge(page)); //TODO?
 
 	if (PageAnon(page)) {
 		anon_vma = page_lock_anon_vma_read(page);
@@ -435,7 +435,9 @@ int cant_encrypt(struct page *page, unsigned long vm_flags) {
 		return 1;
 	// Don't encrypt exe pages
 	if ((vm_flags | VM_EXEC) && !PageAnon(page))
-		return 0;
+		return 1;
+	if (PageTransHuge(page))
+		return 0;//TODO?
 	return 0;
 }
 
