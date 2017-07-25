@@ -890,8 +890,10 @@ static int tcp_v4_send_synack(const struct sock *sk, struct dst_entry *dst,
  */
 static void tcp_v4_reqsk_destructor(struct request_sock *req)
 {
-	if (tcp_rsk(req)->eno)
+	if (tcp_rsk(req)->eno) {
+		tcp_eno_deinit(tcp_rsk(req)->eno);
 		kfree(tcp_rsk(req)->eno);
+	}
 	kfree(inet_rsk(req)->opt);
 }
 
@@ -1913,6 +1915,7 @@ static int tcp_v4_init_sock(struct sock *sk)
 void tcp_free_eno(struct tcp_sock *tp)
 {
 	if (tp->eno) {
+		tcp_eno_deinit(tp->eno);
 		kfree(tp->eno);
 		tp->eno = NULL;
 	}

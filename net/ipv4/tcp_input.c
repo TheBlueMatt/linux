@@ -6483,6 +6483,7 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 				tcp_eno_init(eno, false);
 				if (!tcp_eno_negotiate(eno, &eno_rx_sso)) {
 					printk(KERN_CRIT "ENO: negotiation failed\n");
+					tcp_eno_deinit(eno);
 					kfree(eno);
 				} else {
 					printk(KERN_CRIT "ENO: negotiation succeeded for TEP ID 0x%02x\n",

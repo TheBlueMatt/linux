@@ -318,6 +318,11 @@ void tcp_eno_init(struct tcp_eno *eno, bool active)
 	eno->neg_ofs = -1;
 }
 
+void tcp_eno_deinit(struct tcp_eno *eno)
+{
+
+}
+
 bool tcp_eno_negotiate(struct tcp_eno *eno, struct tcp_eno_syn_subopts *r_sso)
 {
 	const u8 *neg_iter;

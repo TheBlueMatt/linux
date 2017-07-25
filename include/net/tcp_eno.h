@@ -81,6 +81,9 @@ struct tcp_eno {
 /* Initializes the handshake state. Must be called before tcp_eno_negotiate. */
 void tcp_eno_init(struct tcp_eno *eno, bool active);
 
+/* Frees up any additional state created in tcp_eno_init or tcp_eno_negotiate */
+void tcp_eno_deinit(struct tcp_eno *eno);
+
 /* Returns true iff negotiation succeeds, setting eno->neg_ofs appropriately. */
 bool tcp_eno_negotiate(struct tcp_eno *eno, struct tcp_eno_syn_subopts *r_sso);
 
