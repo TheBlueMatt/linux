@@ -6480,8 +6480,7 @@ int tcp_conn_request(struct request_sock_ops *rsk_ops,
 			struct tcp_eno *eno = kzalloc(sizeof(*eno), GFP_ATOMIC);
 			if (likely(eno)) {
 				printk(KERN_CRIT "ENO: processing SYN\n");
-				tcp_eno_init(eno, false);
-				if (!tcp_eno_negotiate(eno, &eno_rx_sso)) {
+				if (!tcp_eno_init(eno, false) || !tcp_eno_negotiate(eno, &eno_rx_sso)) {
 					printk(KERN_CRIT "ENO: negotiation failed\n");
 					tcp_eno_deinit(eno);
 					kfree(eno);

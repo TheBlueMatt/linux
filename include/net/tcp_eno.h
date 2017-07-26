@@ -56,6 +56,51 @@ struct tcp_eno_syn_subopts  {
 	u8	val[TCP_ENO_SUBOPTION_MAX]; /* Option data */
 };
 
+//TODO: Move to a tep-specific header?
+struct tcp_eno_tep {
+	/* Create a session for a fresh syn.
+	 * This should only succeed (ie return non-NULL with new session data)
+	 * iff session resumption is to occur and the subopts struct was filled
+	 * in with the data neccessary to include in the syn packet.
+	 * In case this fails, init_tep_session may be called to create a session
+	 * for this connection later.
+	 * If the remote host does not use this TEP, free_tep_session will be
+	 * called, without a tep_negotiated call.
+	 * TODO Limit the API to only allow it to add data for its type, dont pass the full opts
+	 * TODO Pipe the remote host in from TCP */
+	void * (*init_resume_tep_session) (struct tcp_eno_syn_subopts *opts, bool role_B);
+
+	/* Create a session from remote syn subopts.
+	 * Returns NULL if init failed (ie data provided is invalid)
+	 * TODO Pipe the remote host in from TCP */
+	void * (*init_tep_session) (const u8 *remote_subopt_data, int remote_subopt_data_len, bool role_B);
+
+	/* Called when we have both sent and received an ACK with an ENO header and
+	 * this TEP was selected.
+	 * If false is returned, this session will be free'd
+	 * Generally this should only fail if remote did something bad in response
+	 * to a resume attempt, otherwise init_tep_session should fail.
+	 * TODO: Needs to be able to create data chunks, for session handshake */
+	bool (*tep_negotiated) (void *session_data, const u8 *remote_subopt_data, int remote_subopt_data_len);
+
+	/* TODO: Data processing/generation calls */
+
+	/* Frees session data returned by init_tep_session */
+	void (*free_tep_session) (void *session_data);
+
+	u8 tep_id; /* The TEP ID used in the glt field to identify this tep */
+
+	/* Module which contains tep */
+	struct module *tep_module;
+
+	/* The rest are internal only */
+	struct list_head tep_list;
+	atomic_t tep_refcnt;
+};
+
+bool tcp_eno_register_tep(struct tcp_eno_tep *tep);
+void tcp_eno_unregister_tep(struct tcp_eno_tep *tep);
+
 /* TODO: Probably want to reference the skb directly for the remote options
    instead of copying them over. This will require some invasive changes and/or
    duck typing */
@@ -71,15 +116,17 @@ static inline void tcp_eno_set_syn_subopts(struct tcp_eno_syn_subopts *sso,
    TODO: We need to destroy this state when it's no longer needed (e.g., after
    encryption has been negotiated) */
 struct tcp_eno {
-	struct tcp_eno_syn_subopts sso;	/* Suboptions */
-	s8	neg_ofs;		/* Offset of negotiated suboption, or -1 */
-	bool	active : 1,		/* Local is active opener */
-		role_B : 1,		/* Local is role B */
-		remote_enabled : 1;	/* Remote has sent non-SYN ENO segment */
+	struct tcp_eno_syn_subopts sso;                /* Suboptions */
+	s8                         neg_ofs;            /* Offset of negotiated suboption, or -1 */
+	bool                       active         : 1, /* Local is active opener */
+	                           role_B         : 1, /* Local is role B */
+	                           remote_enabled : 1; /* Remote has sent non-SYN ENO segment */
+	struct tcp_eno_tep        *session_tep;        /* The tep which generated the session data */
+	void                      *tep_session_data;   /* The tep's data from init_tep_session */
 };
 
 /* Initializes the handshake state. Must be called before tcp_eno_negotiate. */
-void tcp_eno_init(struct tcp_eno *eno, bool active);
+bool tcp_eno_init(struct tcp_eno *eno, bool active);
 
 /* Frees up any additional state created in tcp_eno_init or tcp_eno_negotiate */
 void tcp_eno_deinit(struct tcp_eno *eno);
@@ -106,9 +153,3 @@ static inline bool tcp_eno_has_remote_enabled(struct tcp_eno *eno)
 }
 
 int tcp_eno_negotiated_tep(struct tcp_eno *eno);
-
-/* TODO:
-
-   * Allow registration of TEP types along with function pointers for validation
-   and state setup
- */

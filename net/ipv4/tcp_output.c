@@ -3374,10 +3374,9 @@ static void tcp_connect_init(struct sock *sk)
 	/* TODO: Decide if we want ENO on this connection */
 	/* TODO: Not sure if this is the correct allocator */
 	tp->eno = kzalloc(sizeof(struct tcp_eno), sk->sk_allocation);
-	if (likely(tp->eno)) {
-		printk(KERN_CRIT "ENO: initializing active opener\n");
+	if (likely(tp->eno) && tcp_eno_init(tp->eno, true)) {
+		printk(KERN_CRIT "ENO: initialized for active opener\n");
 		tp->eno_enabled = true;
-		tcp_eno_init(tp->eno, true);
 	} else
 		printk(KERN_CRIT "ENO: allocation failed\n");
 
