@@ -432,6 +432,14 @@ config INET_DIAG
 
 	  If unsure, say Y.
 
+config TCP_TCPCRYPT
+	tristate "TCP: tcpcrypt encryption support"
+	default y
+	---help---
+	  Support tcpcrypt for tcp connections
+
+	  If unsure, say Y.
+
 config INET_TCP_DIAG
 	depends on INET_DIAG
 	def_tristate INET_DIAG
