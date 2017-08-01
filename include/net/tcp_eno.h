@@ -75,15 +75,18 @@ struct tcp_eno_tep {
 	 * TODO Pipe the remote host in from TCP */
 	void * (*init_tep_session) (const u8 *remote_subopt_data, int remote_subopt_data_len, bool role_B);
 
-	/* Called when we have both sent and received an ACK with an ENO header and
-	 * this TEP was selected.
+	/* Called when we have both sent and received an ENO header and this TEP
+	 * is the best available TEP.
 	 * If false is returned, this session will be free'd
 	 * Generally this should only fail if remote did something bad in response
 	 * to a resume attempt, otherwise init_tep_session should fail.
 	 * TODO: Needs to be able to create data chunks, for session handshake */
 	bool (*tep_negotiated) (void *session_data, const u8 *remote_subopt_data, int remote_subopt_data_len);
 
-	/* TODO: Data processing/generation calls */
+	/* TODO: Docs, figure out if we can do in-place support */
+	void (*receive_data) (void *session_data, const u8 *data, int data_len);
+
+	/* TODO: Data generation calls */
 
 	/* Frees session data returned by init_tep_session */
 	void (*free_tep_session) (void *session_data);
