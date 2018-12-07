@@ -411,7 +411,6 @@ static struct fw_event_work *alloc_fw_event_work(int len)
 	return fw_event;
 }
 
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)) && (LINUX_VERSION_CODE < KERNEL_VERSION(3,18,0)))
 static inline unsigned int mpt3sas_scsi_prot_interval(struct scsi_cmnd *scmd)
 {
         return scmd->device->sector_size;
@@ -422,7 +421,6 @@ static inline u32 mpt3sas_scsi_prot_ref_tag(struct scsi_cmnd *scmd)
       return blk_rq_pos(scmd->request) >>
                (ilog2(mpt3sas_scsi_prot_interval(scmd)) - 9) & 0xffffffff;
 }
-#endif
 
 /**
  * struct _scsi_io_transfer - scsi io transfer
@@ -6198,7 +6196,9 @@ _scsih_setup_eedp(struct MPT3SAS_ADAPTER *ioc, struct scsi_cmnd *scmd,
 
 		eedp_flags |= MPI2_SCSIIO_EEDPFLAGS_INC_PRI_REFTAG;
 		mpi_request->CDB.EEDP32.PrimaryReferenceTag =
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,18,0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0))
+			cpu_to_be32(mpt3sas_scsi_prot_ref_tag(scmd));
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3,18,0))
 			cpu_to_be32(scsi_prot_ref_tag(scmd));
 #elif ((LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,32)) && (LINUX_VERSION_CODE < KERNEL_VERSION(3,18,0)))
 			cpu_to_be32(mpt3sas_scsi_prot_ref_tag(scmd));
